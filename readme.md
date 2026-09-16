@@ -54,7 +54,8 @@ come from Codex, and reset times use your local time zone.
 Watch appends each snapshot to the terminal. Failed refreshes are reported on
 stderr and retried; alarms sound at most once per successful refresh while quota
 remains low. macOS uses the built-in Sosumi sound; other platforms use the
-terminal bell. JSON output stays on stdout, with warnings and alarms on stderr.
+terminal bell. JSON snapshots, including any data-availability warnings, stay on
+stdout; refresh errors, reset outcomes, and alarms go to stderr.
 
 ## Opt in to earned resets
 

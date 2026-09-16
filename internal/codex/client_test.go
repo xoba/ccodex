@@ -106,6 +106,9 @@ func TestFetchReadsOnlyAccountEndpointsAndHandlesServerMessages(t *testing.T) {
 	if snapshot.RateLimits == nil || snapshot.RateLimits.RateLimits.Primary == nil {
 		t.Fatalf("missing rate limits: %+v", snapshot.RateLimits)
 	}
+	if snapshot.RateLimits.AccountID == nil || *snapshot.RateLimits.AccountID != "account-123" {
+		t.Fatalf("missing account identity: %+v", snapshot.RateLimits.AccountID)
+	}
 	window := snapshot.RateLimits.RateLimits.Primary
 	if window.UsedPercent == nil || *window.UsedPercent != 37.5 || window.WindowDurationMins == nil || *window.WindowDurationMins != 300 {
 		t.Fatalf("unexpected primary window: %+v", window)
@@ -370,6 +373,8 @@ func runHelper() int {
 				account = nil
 			} else if scenario == "api-key" {
 				account = map[string]any{"type": "apiKey"}
+			} else if scenario == "account-no-email" {
+				account = map[string]any{"type": "chatgpt", "email": nil, "planType": "pro"}
 			}
 			respond(req, map[string]any{"account": account, "requiresOpenaiAuth": true})
 		case "account/rateLimits/read":
@@ -399,6 +404,14 @@ func runHelper() int {
 			}
 			var limits any
 			json.Unmarshal([]byte(`{"rateLimits":{"limitId":"codex","primary":{"usedPercent":37.5,"windowDurationMins":300,"resetsAt":1790000000},"credits":{"hasCredits":true,"unlimited":false,"balance":"2.50"}},"rateLimitsByLimitId":{"codex":{"secondary":{"usedPercent":null,"windowDurationMins":10080,"resetsAt":null}}},"ordinaryUsageAllowed":false,"rateLimitResetCredits":{"availableCount":2,"credits":[{"id":"credit-123","resetType":"codexRateLimits","status":"available","grantedAt":1789000000,"expiresAt":1791000000,"title":"Earned reset","description":null}]}}`), &limits)
+			if scenario != "reset-accountid-missing" {
+				limits.(map[string]any)["accountId"] = "account-123"
+			}
+			if scenario == "reset-accountid-null" {
+				limits.(map[string]any)["accountId"] = nil
+			} else if scenario == "reset-accountid-blank" {
+				limits.(map[string]any)["accountId"] = " "
+			}
 			respond(req, limits)
 		case "account/rateLimitResetCredit/consume":
 			switch scenario {

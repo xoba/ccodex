@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"xoba.com/codex/internal/codex"
+	"xoba.com/ccodex/internal/codex"
 )
 
 func TestStatusJSON(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"xoba.com/codex/internal/codex"
+	"xoba.com/ccodex/internal/codex"
 )
 
 func resetPreviewSnapshot(t *testing.T) *codex.Snapshot {

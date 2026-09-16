@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"xoba.com/codex/internal/codex"
+	"xoba.com/ccodex/internal/codex"
 )
 
 func exampleSnapshot(t *testing.T) *codex.Snapshot {

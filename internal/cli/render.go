@@ -12,7 +12,7 @@ import (
 	"time"
 	"unicode"
 
-	"xoba.com/codex/internal/codex"
+	"xoba.com/ccodex/internal/codex"
 )
 
 func renderText(w io.Writer, snapshot *codex.Snapshot) error {

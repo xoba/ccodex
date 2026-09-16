@@ -22,6 +22,11 @@ const (
 	maxMessageSize = 4 << 20
 )
 
+// ErrAccountChanged means a reset's expected identity could not be confirmed.
+// No reset request was sent. Automatic callers should pause instead of carrying
+// an existing reset attempt over to another account.
+var ErrAccountChanged = errors.New("Codex account identity changed or is unavailable")
+
 type Options struct {
 	// Binary defaults to codex, resolved through PATH.
 	Binary string
@@ -97,9 +102,27 @@ func Reset(ctx context.Context, opts Options, params ResetParams) (*ResetResult,
 	defer cancel()
 	client, account, err := openAccount(ctx, opts.Binary)
 	if err != nil {
+		var identityErr *accountIdentityError
+		if (params.ExpectedAccount != nil || params.ExpectedAccountID != "") && errors.As(err, &identityErr) {
+			return nil, fmt.Errorf("%w; reset was not attempted: %w", ErrAccountChanged, err)
+		}
 		return nil, err
 	}
 	defer client.close()
+	if expected := params.ExpectedAccount; expected != nil {
+		if account.Type != expected.Type || !sameOptionalString(account.Email, expected.Email) {
+			return nil, fmt.Errorf("%w; the signed-in account does not match the expected account; reset was not attempted", ErrAccountChanged)
+		}
+	}
+	if params.ExpectedAccountID != "" {
+		limits, err := client.readRateLimits(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("%w; could not verify the expected account ID; reset was not attempted: %w", ErrAccountChanged, err)
+		}
+		if limits.AccountID == nil || strings.TrimSpace(*limits.AccountID) == "" || *limits.AccountID != params.ExpectedAccountID {
+			return nil, fmt.Errorf("%w; the current account ID is missing or does not match the expected account; reset was not attempted", ErrAccountChanged)
+		}
+	}
 	var response struct {
 		Outcome string `json:"outcome"`
 	}
@@ -170,15 +193,28 @@ func (c *client) initializeAccount(ctx context.Context) (*Account, error) {
 		Account *Account `json:"account"`
 	}
 	if err := c.call(ctx, "account/read", map[string]bool{"refreshToken": false}, &response); err != nil {
-		return nil, fmt.Errorf("read Codex account: %w", err)
+		return nil, &accountIdentityError{fmt.Errorf("read Codex account: %w", err)}
 	}
 	if response.Account == nil {
-		return nil, errors.New("Codex is not signed in; run `codex login` and sign in with ChatGPT")
+		return nil, &accountIdentityError{errors.New("Codex is not signed in; run `codex login` and sign in with ChatGPT")}
 	}
 	if response.Account.Type != "chatgpt" {
-		return nil, errors.New("Codex subscription limits require a ChatGPT login; check `codex login status` and sign in with ChatGPT using `codex login`")
+		return nil, &accountIdentityError{errors.New("Codex subscription limits require a ChatGPT login; check `codex login status` and sign in with ChatGPT using `codex login`")}
 	}
 	return response.Account, nil
+}
+
+// Preserve the ordinary account-read error text while allowing a bound reset
+// to distinguish unavailable identity from startup and protocol initialization.
+type accountIdentityError struct{ error }
+
+func (e *accountIdentityError) Unwrap() error { return e.error }
+
+func sameOptionalString(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 func (c *client) readRateLimits(ctx context.Context) (*RateLimitsResponse, error) {

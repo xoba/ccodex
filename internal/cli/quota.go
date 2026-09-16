@@ -3,7 +3,7 @@ package cli
 import (
 	"math"
 
-	"xoba.com/codex/internal/codex"
+	"xoba.com/ccodex/internal/codex"
 )
 
 // quotaBuckets selects the same authoritative view for display and alarms.

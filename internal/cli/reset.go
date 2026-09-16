@@ -13,7 +13,7 @@ import (
 	"unicode"
 
 	"github.com/spf13/cobra"
-	"xoba.com/codex/internal/codex"
+	"xoba.com/ccodex/internal/codex"
 )
 
 type resetFunc func(context.Context, codex.Options, codex.ResetParams) (*codex.ResetResult, error)
@@ -132,13 +132,7 @@ func renderResetPreview(w io.Writer, snapshot *codex.Snapshot, creditID string) 
 }
 
 func renderResetResult(w io.Writer, result *codex.ResetResult) error {
-	messages := map[string]string{
-		"reset":           "Reset applied. One earned reset was consumed.",
-		"alreadyRedeemed": "This request already applied a reset. No additional reset was consumed.",
-		"nothingToReset":  "No reset used: no quota window is currently eligible.",
-		"noCredit":        "No reset used: no eligible earned reset credit is available for this request.",
-	}
-	message, ok := messages[result.Outcome]
+	message, ok := resetOutcomeMessage(result.Outcome)
 	if !ok {
 		return fmt.Errorf("unrecognized reset outcome; check status and retry with the same --idempotency-key")
 	}
@@ -157,4 +151,15 @@ func renderResetResult(w io.Writer, result *codex.ResetResult) error {
 		FetchedAt: result.FetchedAt, Account: result.Account,
 		RateLimits: result.RateLimits, Warnings: result.Warnings,
 	}, false)
+}
+
+func resetOutcomeMessage(outcome string) (string, bool) {
+	messages := map[string]string{
+		"reset":           "Reset applied. One earned reset was consumed.",
+		"alreadyRedeemed": "This request already applied a reset. No additional reset was consumed.",
+		"nothingToReset":  "No reset used: no quota window is currently eligible.",
+		"noCredit":        "No reset used: no eligible earned reset credit is available for this request.",
+	}
+	message, ok := messages[outcome]
+	return message, ok
 }

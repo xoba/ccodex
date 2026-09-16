@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"xoba.com/codex/internal/codex"
+	"xoba.com/ccodex/internal/codex"
 )
 
 const version = "0.1.0"
@@ -32,8 +32,14 @@ func newCommandWithReset(fetch fetchFunc, reset resetFunc) *cobra.Command {
 }
 
 func newCommandWithAlarm(fetch fetchFunc, reset resetFunc, alarm alarmFunc) *cobra.Command {
+	return newCommandWithBudget(fetch, reset, alarm, defaultAutoResetBudget)
+}
+
+func newCommandWithBudget(fetch fetchFunc, reset resetFunc, alarm alarmFunc, createBudget func() (autoResetBudget, error)) *cobra.Command {
 	var jsonOutput bool
 	var noAlarm bool
+	var autoReset bool
+	var maxResetsPerDay int
 	var alarmThreshold float64
 	var opts codex.Options
 	var interval time.Duration
@@ -90,7 +96,7 @@ func newCommandWithAlarm(fetch fetchFunc, reset resetFunc, alarm alarmFunc) *cob
 	watch := &cobra.Command{
 		Use:   "watch",
 		Short: "Refresh continuously until interrupted",
-		Long:  "Fetch immediately, then wait the interval after each refresh.\nSuccessful snapshots go to stdout; failed refreshes go to stderr and are retried.\nSound once per refresh when any reported quota is below --alarm-threshold percent remaining.\nPress Ctrl-C to stop.",
+		Long:  "Fetch immediately, then wait the interval after each refresh.\nSuccessful snapshots go to stdout; failures and reset outcomes go to stderr.\nBelow --alarm-threshold percent remaining, sound once and automatically\nspend an available earned reset, subject to --max-resets-per-day (default 1).\nUse --auto-reset=false for monitoring only. Press Ctrl-C to stop.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validate(); err != nil {
@@ -101,6 +107,20 @@ func newCommandWithAlarm(fetch fetchFunc, reset resetFunc, alarm alarmFunc) *cob
 			}
 			if math.IsNaN(alarmThreshold) || math.IsInf(alarmThreshold, 0) || alarmThreshold < 0 || alarmThreshold > 100 {
 				return fmt.Errorf("--alarm-threshold must be a finite percentage between 0 and 100")
+			}
+			if maxResetsPerDay < 0 {
+				return fmt.Errorf("--max-resets-per-day must be zero or greater")
+			}
+			var resetState autoResetState
+			var budget autoResetBudget
+			if autoReset && reset != nil && maxResetsPerDay > 0 {
+				var err error
+				budget, err = createBudget()
+				if err != nil {
+					if _, writeErr := fmt.Fprintf(cmd.ErrOrStderr(), "ccodex: automatic resets unavailable: %v\n", err); writeErr != nil {
+						return writeErr
+					}
+				}
 			}
 			for {
 				if err := cmd.Context().Err(); err != nil {
@@ -114,21 +134,35 @@ func newCommandWithAlarm(fetch fetchFunc, reset resetFunc, alarm alarmFunc) *cob
 					if _, writeErr := fmt.Fprintf(cmd.ErrOrStderr(), "ccodex: %s refresh failed: %v (retrying in %s)\n", time.Now().Format(time.RFC3339), err, interval); writeErr != nil {
 						return writeErr
 					}
-				} else if err := writeSnapshot(cmd, snapshot, true); err != nil {
-					return err
-				} else if !noAlarm && alarm != nil && hasLowQuota(snapshot, alarmThreshold) {
+				} else {
+					if err := writeSnapshot(cmd, snapshot, true); err != nil {
+						return err
+					}
 					if err := cmd.Context().Err(); err != nil {
 						return err
 					}
-					// Decide once over the whole snapshot, so multiple low
-					// windows still produce only one sound this iteration.
-					alarmErr := alarm(cmd.Context(), cmd.ErrOrStderr())
-					if err := cmd.Context().Err(); err != nil {
-						return err
-					}
-					if alarmErr != nil {
-						if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "ccodex: could not play low-quota alarm: %v\n", alarmErr); err != nil {
+					if !noAlarm && alarm != nil && hasLowQuota(snapshot, alarmThreshold) {
+						// Decide once over the whole snapshot, so multiple low
+						// windows still produce only one sound this iteration.
+						alarmErr := alarm(cmd.Context(), cmd.ErrOrStderr())
+						if err := cmd.Context().Err(); err != nil {
 							return err
+						}
+						if alarmErr != nil {
+							if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "ccodex: could not play low-quota alarm: %v\n", alarmErr); err != nil {
+								return err
+							}
+						}
+					}
+					if autoReset && reset != nil && budget != nil && maxResetsPerDay > 0 {
+						updated, err := applyAutoReset(cmd.Context(), &resetState, snapshot, alarmThreshold, opts, reset, budget, maxResetsPerDay, cmd.ErrOrStderr())
+						if err != nil {
+							return err
+						}
+						if updated != nil {
+							if err := writeSnapshot(cmd, updated, true); err != nil {
+								return err
+							}
 						}
 					}
 				}
@@ -143,8 +177,10 @@ func newCommandWithAlarm(fetch fetchFunc, reset resetFunc, alarm alarmFunc) *cob
 		},
 	}
 	watch.Flags().DurationVar(&interval, "interval", time.Minute, "Delay between refreshes (minimum 1s)")
-	watch.Flags().Float64Var(&alarmThreshold, "alarm-threshold", 5, "Sound below this remaining quota percentage (0–100; 0 disables alarms)")
+	watch.Flags().Float64Var(&alarmThreshold, "alarm-threshold", 5, "Alarm and auto-reset below this remaining quota percentage (0–100; 0 disables both)")
 	watch.Flags().BoolVar(&noAlarm, "no-alarm", false, "Disable low-quota alarm sounds")
+	watch.Flags().BoolVar(&autoReset, "auto-reset", true, "Automatically spend an available earned reset below the alarm threshold")
+	watch.Flags().IntVar(&maxResetsPerDay, "max-resets-per-day", 1, "Maximum automatic resets per local calendar day, shared across watch restarts (0 disables)")
 	root.AddCommand(watch)
 	root.AddCommand(newResetCommand(fetch, reset, &opts, &jsonOutput, validate))
 	return root

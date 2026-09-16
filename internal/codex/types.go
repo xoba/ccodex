@@ -21,6 +21,7 @@ type Account struct {
 }
 
 type RateLimitsResponse struct {
+	AccountID             *string                      `json:"accountId"`
 	RateLimits            *RateLimitSnapshot           `json:"rateLimits"`
 	RateLimitsByLimitID   map[string]RateLimitSnapshot `json:"rateLimitsByLimitId"`
 	OrdinaryUsageAllowed  *bool                        `json:"ordinaryUsageAllowed"`
@@ -72,6 +73,10 @@ type ResetCredit struct {
 type ResetParams struct {
 	IdempotencyKey string `json:"idempotencyKey"`
 	CreditID       string `json:"creditId,omitempty"`
+	// Expected identity is checked locally before redemption and is never sent
+	// as part of the app-server request. Manual callers may leave it unset.
+	ExpectedAccount   *Account `json:"-"`
+	ExpectedAccountID string   `json:"-"`
 }
 
 // ResetResult preserves a confirmed outcome even if the follow-up quota read

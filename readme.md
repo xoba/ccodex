@@ -23,6 +23,14 @@ brew install xoba/tap/ccodex
 ccodex watch
 ```
 
+`ccodex` is a companion for people already using the Codex CLI. If `codex` is on
+your `PATH` and you are signed in, skip the Codex installation and login steps
+above; `ccodex` reuses your existing setup.
+
+Codex is distributed as a Homebrew **cask**, while `ccodex` uses a source-build
+**formula**. Homebrew [does not support formulas depending on casks](https://github.com/orgs/Homebrew/discussions/5015),
+so the current package cannot install Codex automatically as a dependency.
+
 Watch refreshes every **60 seconds** and sounds an alarm when remaining quota is
 **below 5%**. It never consumes an earned reset unless you pass `--auto-reset`.
 Press Ctrl-C to stop. For a single snapshot, run `ccodex`.

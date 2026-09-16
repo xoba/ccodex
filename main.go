@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"xoba.com/ccodex/internal/cli"
+	"github.com/xoba/ccodex/internal/cli"
 )
 
 func main() {

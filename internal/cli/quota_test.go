@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"xoba.com/ccodex/internal/codex"
+	"github.com/xoba/ccodex/internal/codex"
 )
 
 func quotaWindow(used float64) *codex.RateLimitWindow {

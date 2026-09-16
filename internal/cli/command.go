@@ -10,10 +10,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"xoba.com/ccodex/internal/codex"
+	"github.com/xoba/ccodex/internal/buildinfo"
+	"github.com/xoba/ccodex/internal/codex"
 )
-
-const version = "0.1.0"
 
 type fetchFunc func(context.Context, codex.Options) (*codex.Snapshot, error)
 type alarmFunc func(context.Context, io.Writer) error
@@ -77,7 +76,7 @@ func newCommandWithBudget(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cre
 		Use:           "ccodex",
 		Short:         "Check Codex usage, limits, and reset times",
 		Long:          "ccodex checks the subscription limits available through your signed-in Codex CLI.\nRunning ccodex without a subcommand shows the current status.",
-		Version:       version,
+		Version:       buildinfo.Version,
 		Args:          cobra.NoArgs,
 		RunE:          status,
 		SilenceUsage:  true,
@@ -96,7 +95,7 @@ func newCommandWithBudget(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cre
 	watch := &cobra.Command{
 		Use:   "watch",
 		Short: "Refresh continuously until interrupted",
-		Long:  "Fetch immediately, then wait the interval after each refresh.\nSuccessful snapshots go to stdout; failures and reset outcomes go to stderr.\nBelow --alarm-threshold percent remaining, sound once and automatically\nspend an available earned reset, subject to --max-resets-per-day (default 1).\nUse --auto-reset=false for monitoring only. Press Ctrl-C to stop.",
+		Long:  "Fetch immediately, then wait the interval after each refresh.\nMonitoring is read-only by default. Below --alarm-threshold percent remaining,\nsound once per refresh. Use --auto-reset to automatically spend an available\nearned reset, subject to --max-resets-per-day (default 1).\nSuccessful snapshots go to stdout; failures and reset outcomes go to stderr.\nPress Ctrl-C to stop.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validate(); err != nil {
@@ -177,9 +176,9 @@ func newCommandWithBudget(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cre
 		},
 	}
 	watch.Flags().DurationVar(&interval, "interval", time.Minute, "Delay between refreshes (minimum 1s)")
-	watch.Flags().Float64Var(&alarmThreshold, "alarm-threshold", 5, "Alarm and auto-reset below this remaining quota percentage (0–100; 0 disables both)")
+	watch.Flags().Float64Var(&alarmThreshold, "alarm-threshold", 5, "Alarm below this remaining quota percentage; also applies to --auto-reset (0–100; 0 disables both)")
 	watch.Flags().BoolVar(&noAlarm, "no-alarm", false, "Disable low-quota alarm sounds")
-	watch.Flags().BoolVar(&autoReset, "auto-reset", true, "Automatically spend an available earned reset below the alarm threshold")
+	watch.Flags().BoolVar(&autoReset, "auto-reset", false, "Opt in to automatically spending an available earned reset below the alarm threshold")
 	watch.Flags().IntVar(&maxResetsPerDay, "max-resets-per-day", 1, "Maximum automatic resets per local calendar day, shared across watch restarts (0 disables)")
 	root.AddCommand(watch)
 	root.AddCommand(newResetCommand(fetch, reset, &opts, &jsonOutput, validate))

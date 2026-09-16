@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"xoba.com/ccodex/internal/codex"
+	"github.com/xoba/ccodex/internal/codex"
 )
 
 func TestWatchSoundsOnceEachLowIterationWithManyLowQuotas(t *testing.T) {

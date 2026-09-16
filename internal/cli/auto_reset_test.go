@@ -5,7 +5,7 @@ import (
 	"math"
 	"testing"
 
-	"xoba.com/ccodex/internal/codex"
+	"github.com/xoba/ccodex/internal/codex"
 )
 
 func autoResetSnapshot(used float64, credits int64) *codex.Snapshot {

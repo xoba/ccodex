@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/xoba/ccodex/internal/buildinfo"
 )
 
 const (
@@ -182,7 +184,7 @@ func openAccount(ctx context.Context, binary string) (*client, *Account, error) 
 func (c *client) initializeAccount(ctx context.Context) (*Account, error) {
 	var initialized struct{}
 	if err := c.call(ctx, "initialize", map[string]any{
-		"clientInfo": map[string]string{"name": "ccodex", "version": "0.1.0"},
+		"clientInfo": map[string]string{"name": "ccodex", "version": buildinfo.Version},
 	}, &initialized); err != nil {
 		return nil, fmt.Errorf("initialize Codex app-server: %w", err)
 	}

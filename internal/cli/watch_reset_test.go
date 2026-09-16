@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"xoba.com/ccodex/internal/codex"
-	"xoba.com/ccodex/internal/resetbudget"
+	"github.com/xoba/ccodex/internal/codex"
+	"github.com/xoba/ccodex/internal/resetbudget"
 )
 
 func newWatchResetTestCommand(t *testing.T, fetch fetchFunc, reset resetFunc, alarm alarmFunc) *cobra.Command {
@@ -41,7 +41,7 @@ func recoveredReset(params codex.ResetParams, credits int64) *codex.ResetResult 
 	}
 }
 
-func TestWatchAutoResetDefaultRecoversAndRearms(t *testing.T) {
+func TestWatchAutoResetOptInRecoversAndRearms(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var stdout, stderr bytes.Buffer
@@ -68,7 +68,7 @@ func TestWatchAutoResetDefaultRecoversAndRearms(t *testing.T) {
 	})
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
-	cmd.SetArgs([]string{"watch", "--json", "--interval", "1s", "--max-resets-per-day", "2"})
+	cmd.SetArgs([]string{"watch", "--auto-reset", "--json", "--interval", "1s", "--max-resets-per-day", "2"})
 	bounded, stop := context.WithTimeout(ctx, 5*time.Second)
 	defer stop()
 	if err := cmd.ExecuteContext(bounded); !errors.Is(err, context.Canceled) {
@@ -92,27 +92,42 @@ func TestWatchAutoResetDefaultRecoversAndRearms(t *testing.T) {
 	}
 }
 
-func TestWatchAutoResetFalseKeepsAlarmOnly(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	reads, sounds := 0, 0
-	cmd := newWatchResetTestCommand(t, func(context.Context, codex.Options) (*codex.Snapshot, error) {
-		reads++
-		if reads == 2 {
-			cancel()
-		}
-		return autoSnapshot(99, 2), nil
-	}, func(context.Context, codex.Options, codex.ResetParams) (*codex.ResetResult, error) {
-		t.Fatal("--auto-reset=false redeemed a credit")
-		return nil, nil
-	}, func(context.Context, io.Writer) error {
-		sounds++
-		return nil
-	})
-	cmd.SetOut(io.Discard)
-	cmd.SetArgs([]string{"watch", "--auto-reset=false", "--interval", "1s"})
-	if err := cmd.ExecuteContext(ctx); !errors.Is(err, context.Canceled) || sounds != 1 {
-		t.Fatalf("unexpected monitoring behavior: sounds=%d err=%v", sounds, err)
+func TestWatchReadOnlyKeepsAlarmWithoutOpeningResetBudget(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+	}{
+		{"default", []string{"watch", "--interval", "1s"}},
+		{"explicit opt-out", []string{"watch", "--auto-reset=false", "--interval", "1s"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			reads, sounds := 0, 0
+			cmd := newCommandWithBudget(func(context.Context, codex.Options) (*codex.Snapshot, error) {
+				reads++
+				if reads == 2 {
+					cancel()
+				}
+				return autoSnapshot(99, 2), nil
+			}, func(context.Context, codex.Options, codex.ResetParams) (*codex.ResetResult, error) {
+				t.Fatal("read-only watch redeemed a credit")
+				return nil, nil
+			}, func(context.Context, io.Writer) error {
+				sounds++
+				return nil
+			}, func() (autoResetBudget, error) {
+				t.Fatal("read-only watch opened automatic reset accounting")
+				return nil, nil
+			})
+			cmd.SetOut(io.Discard)
+			cmd.SetArgs(test.args)
+			bounded, stop := context.WithTimeout(ctx, 3*time.Second)
+			defer stop()
+			if err := cmd.ExecuteContext(bounded); !errors.Is(err, context.Canceled) || reads != 2 || sounds != 1 {
+				t.Fatalf("unexpected monitoring behavior: reads=%d sounds=%d err=%v", reads, sounds, err)
+			}
+		})
 	}
 }
 
@@ -134,7 +149,7 @@ func TestWatchAutoResetWorksWhenSoundMutedOrFails(t *testing.T) {
 		})
 		cmd.SetOut(io.Discard)
 		cmd.SetErr(&stderr)
-		args := []string{"watch", "--alarm-threshold", "10"}
+		args := []string{"watch", "--auto-reset", "--alarm-threshold", "10"}
 		if muted {
 			args = append(args, "--no-alarm")
 		}
@@ -173,7 +188,7 @@ func TestWatchAutoResetRetriesAmbiguousAttemptWithSameKey(t *testing.T) {
 	}, nil)
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(&stderr)
-	cmd.SetArgs([]string{"watch", "--interval", "1s"})
+	cmd.SetArgs([]string{"watch", "--auto-reset", "--interval", "1s"})
 	bounded, stop := context.WithTimeout(ctx, 4*time.Second)
 	defer stop()
 	if err := cmd.ExecuteContext(bounded); !errors.Is(err, context.Canceled) {
@@ -196,7 +211,7 @@ func TestInterruptedAutomaticResetReportsUnknownOutcome(t *testing.T) {
 	}, nil)
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(&stderr)
-	cmd.SetArgs([]string{"watch"})
+	cmd.SetArgs([]string{"watch", "--auto-reset"})
 	err := cmd.ExecuteContext(ctx)
 	if err == nil || errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "outcome may be unknown") || !strings.Contains(err.Error(), "--idempotency-key") {
 		t.Fatalf("interrupted reset lost retry guidance: %v", err)
@@ -235,7 +250,7 @@ func TestWatchDailyLimitDefaultsToOneAcrossRestarts(t *testing.T) {
 			}
 			return n, err
 		}))
-		cmd.SetArgs([]string{"watch"})
+		cmd.SetArgs([]string{"watch", "--auto-reset"})
 		bounded, stop := context.WithTimeout(ctx, 2*time.Second)
 		err := cmd.ExecuteContext(bounded)
 		stop()
@@ -271,7 +286,7 @@ func TestWatchZeroDailyLimitDisablesResetsButKeepsAlarm(t *testing.T) {
 		return nil, nil
 	})
 	cmd.SetOut(io.Discard)
-	cmd.SetArgs([]string{"watch", "--max-resets-per-day", "0"})
+	cmd.SetArgs([]string{"watch", "--auto-reset", "--max-resets-per-day", "0"})
 	if err := cmd.ExecuteContext(ctx); !errors.Is(err, context.Canceled) || sounds != 1 {
 		t.Fatalf("sounds=%d err=%v", sounds, err)
 	}

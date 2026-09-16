@@ -1,4 +1,4 @@
-module xoba.com/ccodex
+module github.com/xoba/ccodex
 
 go 1.27.1
 

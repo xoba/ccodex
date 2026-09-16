@@ -13,7 +13,7 @@ import (
 	"unicode"
 
 	"github.com/spf13/cobra"
-	"xoba.com/ccodex/internal/codex"
+	"github.com/xoba/ccodex/internal/codex"
 )
 
 type resetFunc func(context.Context, codex.Options, codex.ResetParams) (*codex.ResetResult, error)

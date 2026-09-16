@@ -7,8 +7,8 @@ import (
 	"io"
 	"time"
 
-	"xoba.com/ccodex/internal/codex"
-	"xoba.com/ccodex/internal/resetbudget"
+	"github.com/xoba/ccodex/internal/codex"
+	"github.com/xoba/ccodex/internal/resetbudget"
 )
 
 type autoResetBudget interface {

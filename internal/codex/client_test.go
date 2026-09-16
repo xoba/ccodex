@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/xoba/ccodex/internal/buildinfo"
 )
 
 // The test binary doubles as an app-server. Tests exercise real pipes,
@@ -142,7 +144,7 @@ func TestFetchReadsOnlyAccountEndpointsAndHandlesServerMessages(t *testing.T) {
 			Version string `json:"version"`
 		} `json:"clientInfo"`
 	}
-	if err := json.Unmarshal(requests[0].Params, &init); err != nil || init.ClientInfo.Name != "ccodex" || init.ClientInfo.Version != "0.1.0" {
+	if err := json.Unmarshal(requests[0].Params, &init); err != nil || init.ClientInfo.Name != "ccodex" || init.ClientInfo.Version != buildinfo.Version {
 		t.Fatalf("unexpected initialization: %s", requests[0].Params)
 	}
 	if string(requests[2].Params) != `{"refreshToken":false}` {

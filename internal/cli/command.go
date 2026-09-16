@@ -92,6 +92,17 @@ func newCommandWithBudget(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cre
 		Args:  cobra.NoArgs,
 		RunE:  status,
 	})
+	root.AddCommand(&cobra.Command{
+		Use:   "play",
+		Short: "Play the alarm once and exit for testing",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if alarm == nil {
+				return fmt.Errorf("alarm playback is not configured")
+			}
+			return alarm(cmd.Context(), cmd.ErrOrStderr())
+		},
+	})
 	watch := &cobra.Command{
 		Use:   "watch",
 		Short: "Refresh continuously until interrupted",

@@ -45,6 +45,7 @@ and installs Go as a build dependency.
 ```sh
 ccodex                              # Current status
 ccodex status --json                 # Full snapshot as JSON
+ccodex play                          # Play the alarm once and exit
 ccodex watch                         # Read-only monitoring with alarms
 ccodex watch --no-alarm              # Silent, read-only monitoring
 ccodex watch --interval 30s          # Refresh every 30 seconds
@@ -126,8 +127,8 @@ report general ChatGPT conversation limits or OpenAI API billing.
 - **Refresh times out:** try `ccodex status --timeout 30s`.
 - **Missing data or protocol errors:** update Codex and `ccodex`, then retry.
   Optional fields depend on what your account and Codex version return.
-- **No audible alarm:** check your sound or terminal-bell settings. Alarms require
-  known remaining quota strictly below the threshold.
+- **No audible alarm:** run `ccodex play` to test your sound or terminal-bell
+  settings. Watch alarms require known remaining quota strictly below the threshold.
 
 Report reproducible problems in [GitHub issues](https://github.com/xoba/ccodex/issues).
 Remove account details and other private data from any output you share.
@@ -153,10 +154,10 @@ Alternatively, install with Go and add your Go binary directory to `PATH`:
 go install github.com/xoba/ccodex@latest
 ```
 
-Each operation launches `codex app-server` and exchanges JSON over stdin/stdout.
-Codex manages authentication; `ccodex` has no separate credential store and does
-not start a Codex turn to check usage. Tests use helper processes and do not
-require a signed-in account. Use `status`, `reset --dry-run`, or
+Status and reset operations launch `codex app-server` and exchange JSON over
+stdin/stdout. Codex manages authentication; `ccodex` has no separate credential
+store and does not start a Codex turn to check usage. Tests use helper processes
+and do not require a signed-in account. Use `status`, `reset --dry-run`, or
 `watch --no-alarm` for read-only checks against a live account.
 
 Release instructions are in [docs/releasing.md](docs/releasing.md).

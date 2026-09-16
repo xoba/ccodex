@@ -10,6 +10,7 @@ explicit `ccodex reset` command or `ccodex watch --auto-reset`.
 ccodex                                  # Show current status
 ccodex status                           # Same as the default command
 ccodex status --json                     # Snapshot, including daily history
+ccodex play                              # Play the alarm once and exit
 ccodex watch                            # Monitor and sound alarms; read-only
 ccodex watch --interval 30s              # Wait 30 seconds between refreshes
 ccodex watch --json                      # Stream snapshots as JSON lines
@@ -32,10 +33,14 @@ Values exactly at the threshold, unknown values, and failed refreshes do not
 trigger an alarm. A threshold of `0` disables alarms and new automatic reset
 attempts. `--no-alarm` mutes watch sound but **does not disable automatic resets if
 explicitly enabled with `--auto-reset`**.
-Other commands never sound.
+`status` and `reset` never sound.
 macOS plays the built-in Sosumi sound; other platforms use a terminal bell, whose
 audibility depends on terminal settings. Sound errors produce a warning without
 stopping monitoring, and `--json` keeps stdout clean for JSON consumers.
+
+`play` tests the same alarm once and exits, without fetching quota or requiring
+a Codex sign-in. Playback failures exit with an error. Terminal bells and errors
+go to stderr; stdout stays empty.
 
 ### Automatic resets in watch
 

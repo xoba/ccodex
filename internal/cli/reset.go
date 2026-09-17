@@ -14,11 +14,12 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/xoba/ccodex/internal/codex"
+	"github.com/xoba/ccodex/internal/history"
 )
 
 type resetFunc func(context.Context, codex.Options, codex.ResetParams) (*codex.ResetResult, error)
 
-func newResetCommand(fetch fetchFunc, reset resetFunc, opts *codex.Options, jsonOutput *bool, validate func() error) *cobra.Command {
+func newResetCommand(fetch fetchFunc, reset resetFunc, opts *codex.Options, jsonOutput *bool, validate func() error, newRecorder func(*cobra.Command, time.Duration) *historyRecorder) *cobra.Command {
 	var dryRun bool
 	var params codex.ResetParams
 	cmd := &cobra.Command{
@@ -42,6 +43,7 @@ func newResetCommand(fetch fetchFunc, reset resetFunc, opts *codex.Options, json
 				if err != nil {
 					return err
 				}
+				newRecorder(cmd, 0).samples(cmd.Context(), snapshot, false)
 				if *jsonOutput {
 					return writeJSON(cmd.OutOrStdout(), struct {
 						DryRun   bool            `json:"dryRun"`
@@ -62,8 +64,16 @@ func newResetCommand(fetch fetchFunc, reset resetFunc, opts *codex.Options, json
 			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Reset request ID: %s\nIf interrupted, retry with this same --idempotency-key.\n", params.IdempotencyKey); err != nil {
 				return err
 			}
+			// The user asked for this reset and can see its result, so unlike
+			// an automatic reset it goes ahead even if history cannot record it.
+			recorder := newRecorder(cmd, 0)
+			recorder.log(cmd.Context(), history.ResetEvent{
+				Key: params.IdempotencyKey, Event: "requested", Mode: "manual",
+				Reason: &history.Reason{Trigger: "manual", CreditID: params.CreditID},
+			})
 			result, err := reset(cmd.Context(), *opts, params)
 			if err != nil {
+				recorder.log(cmd.Context(), history.ResetEvent{Key: params.IdempotencyKey, Event: "error", Mode: "manual", Detail: err.Error()})
 				if errors.Is(err, context.Canceled) {
 					// Main treats read-only cancellation as a clean exit. A reset
 					// interruption needs its retry guidance and a nonzero exit.
@@ -71,6 +81,10 @@ func newResetCommand(fetch fetchFunc, reset resetFunc, opts *codex.Options, json
 				}
 				return fmt.Errorf("%w; retry this attempt with --idempotency-key %q", err, params.IdempotencyKey)
 			}
+			recorder.log(cmd.Context(), history.ResetEvent{
+				Key: params.IdempotencyKey, Event: "outcome", Mode: "manual", Account: accountHash(result.RateLimits), Outcome: result.Outcome,
+			})
+			recorder.samples(cmd.Context(), &codex.Snapshot{FetchedAt: result.FetchedAt, RateLimits: result.RateLimits, Account: result.Account}, true)
 			if *jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), result)
 			}

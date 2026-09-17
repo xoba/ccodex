@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/xoba/ccodex/internal/codex"
+	"github.com/xoba/ccodex/internal/history"
 	"github.com/xoba/ccodex/internal/resetbudget"
 )
 
@@ -28,7 +29,9 @@ func defaultAutoResetBudget() (autoResetBudget, error) {
 
 // applyAutoReset considers one ordinary watch snapshot. A returned snapshot is
 // a fresh quota read after redemption; it must not rearm this state machine.
-func applyAutoReset(ctx context.Context, state *autoResetState, snapshot *codex.Snapshot, threshold float64, opts codex.Options, reset resetFunc, budget autoResetBudget, limit int, output io.Writer) (*codex.Snapshot, error) {
+// With a recorder, a request is sent only after the history has saved it, so
+// an unattended redemption cannot go unrecorded.
+func applyAutoReset(ctx context.Context, state *autoResetState, snapshot *codex.Snapshot, threshold float64, opts codex.Options, reset resetFunc, budget autoResetBudget, limit int, output io.Writer, recorder *historyRecorder) (*codex.Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -37,17 +40,21 @@ func applyAutoReset(ctx context.Context, state *autoResetState, snapshot *codex.
 	}
 	if snapshot == nil || snapshot.RateLimits == nil || snapshot.RateLimits.AccountID == nil || *snapshot.RateLimits.AccountID == "" {
 		if hasLowQuota(snapshot, threshold) {
+			recorder.skipped(ctx, "", "noAccountID")
 			_, err := fmt.Fprintln(output, "ccodex: automatic reset skipped: a stable account ID is unavailable")
 			return nil, err
 		}
 		return nil, nil
 	}
 	accountID := *snapshot.RateLimits.AccountID
+	account := accountHash(snapshot.RateLimits)
 	if state.params.ExpectedAccountID != "" && state.params.ExpectedAccountID != accountID {
+		recorder.skipped(ctx, account, "accountChanged")
 		_, err := fmt.Fprintln(output, "ccodex: automatic resets paused because the signed-in account changed; resolve any pending request on its original account before restarting automatic mode")
 		return nil, err
 	}
 	if !hasLowQuota(snapshot, threshold) {
+		recorder.recovered()
 		state.next(snapshot, threshold)
 		return nil, nil
 	}
@@ -65,6 +72,7 @@ func applyAutoReset(ctx context.Context, state *autoResetState, snapshot *codex.
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+		recorder.skipped(ctx, account, "budgetUnavailable")
 		_, err := fmt.Fprintf(output, "ccodex: automatic reset skipped: could not lock daily accounting: %v\n", lockErr)
 		return nil, err
 	}
@@ -80,6 +88,7 @@ func applyAutoReset(ctx context.Context, state *autoResetState, snapshot *codex.
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
+			recorder.skipped(ctx, account, "budgetUnavailable")
 			_, writeErr := fmt.Fprintf(output, "ccodex: automatic reset skipped: could not read daily limit: %v\n", err)
 			return nil, writeErr
 		}
@@ -90,6 +99,12 @@ func applyAutoReset(ctx context.Context, state *autoResetState, snapshot *codex.
 	}
 	params, attempt := state.next(snapshot, threshold)
 	if !attempt {
+		// Quota is low here, so say why this poll spends nothing.
+		if state.params.IdempotencyKey != "" && state.outcome == autoResetConsumed {
+			recorder.skipped(ctx, account, "alreadyResetThisPeriod")
+		} else if !hasResetCredit(snapshot) {
+			recorder.skipped(ctx, account, "noResetAvailable")
+		}
 		return nil, nil
 	}
 	if params.ExpectedAccountID == "" {
@@ -109,23 +124,41 @@ func applyAutoReset(ctx context.Context, state *autoResetState, snapshot *codex.
 			return nil, ctx.Err()
 		}
 		if budgetErr != nil {
+			recorder.skipped(ctx, account, "budgetUnavailable")
 			_, err := fmt.Fprintf(output, "ccodex: automatic reset skipped: could not reserve daily limit: %v\n", budgetErr)
 			return nil, err
 		}
+		recorder.skipped(ctx, account, "dailyLimitReached")
 		_, err := fmt.Fprintf(output, "ccodex: automatic reset skipped: daily limit of %d reached\n", limit)
 		return nil, err
 	}
-	// Save the request ID in the command's output before dispatching. Retries
-	// use this ID even if the first call spent the last available reset.
-	if _, err := fmt.Fprintf(output, "ccodex: automatic reset request ID: %s\n", params.IdempotencyKey); err != nil {
-		// Output failed before dispatch, so the unused reservation can be
-		// released unless it covers an earlier unresolved request.
+	// Nothing has been sent yet, so an unused reservation can be released
+	// unless it covers an earlier unresolved request.
+	releaseUnsent := func() {
 		if !resumedPending && (before.params.IdempotencyKey != params.IdempotencyKey || before.outcome != autoResetUnresolved) {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 			_ = budget.Complete(cleanupCtx, params.IdempotencyKey, "nothingToReset")
 			cleanupCancel()
 		}
+	}
+	// Save the request ID in the command's output before dispatching. Retries
+	// use this ID even if the first call spent the last available reset.
+	if _, err := fmt.Fprintf(output, "ccodex: automatic reset request ID: %s\n", params.IdempotencyKey); err != nil {
+		releaseUnsent()
 		return nil, err
+	}
+	retry := resumedPending || before.params.IdempotencyKey == params.IdempotencyKey
+	if err := recorder.event(ctx, history.ResetEvent{
+		Key: params.IdempotencyKey, Event: "requested", Mode: "auto", Account: account,
+		Reason: lowQuotaReason(snapshot, threshold, limit, retry),
+	}); err != nil {
+		releaseUnsent()
+		*state = before
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		_, writeErr := fmt.Fprintf(output, "ccodex: automatic reset skipped: request %s was not sent because history could not record it: %v (--no-history turns history off)\n", params.IdempotencyKey, err)
+		return nil, writeErr
 	}
 	result, resetErr := reset(ctx, opts, params)
 	message := ""
@@ -140,6 +173,7 @@ func applyAutoReset(ctx context.Context, state *autoResetState, snapshot *codex.
 	}
 	state.record(result, resetErr)
 	if resetErr != nil {
+		recorder.log(ctx, history.ResetEvent{Key: params.IdempotencyKey, Event: "error", Mode: "auto", Account: account, Detail: resetErr.Error()})
 		if ctx.Err() != nil {
 			// Do not wrap context.Canceled: main suppresses it for a clean
 			// watch exit, but an uncertain redemption must remain visible.
@@ -154,6 +188,7 @@ func applyAutoReset(ctx context.Context, state *autoResetState, snapshot *codex.
 	completeCtx, completeCancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	completeErr := budget.Complete(completeCtx, params.IdempotencyKey, result.Outcome)
 	completeCancel()
+	recorder.log(ctx, history.ResetEvent{Key: params.IdempotencyKey, Event: "outcome", Mode: "auto", Account: account, Outcome: result.Outcome})
 	if _, err := fmt.Fprintf(output, "ccodex: automatic reset: %s (request %s)\n", message, params.IdempotencyKey); err != nil {
 		return nil, err
 	}

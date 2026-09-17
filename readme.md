@@ -52,6 +52,8 @@ ccodex watch --interval 30s          # Refresh every 30 seconds
 ccodex watch --alarm-threshold 10    # Alarm below 10% remaining
 ccodex watch --json                  # Stream snapshots as JSON lines
 ccodex reset --dry-run               # Inspect earned resets without using one
+ccodex history                       # When and why resets were requested
+ccodex history usage --csv           # Saved quota readings, ready to graph
 ccodex --help
 ```
 
@@ -65,6 +67,22 @@ stderr and retried; alarms sound at most once per successful refresh while quota
 remains low. macOS uses the built-in Sosumi sound; other platforms use the
 terminal bell. JSON snapshots, including any data-availability warnings, stay on
 stdout; refresh errors, reset outcomes, and alarms go to stderr.
+
+## History
+
+`ccodex` saves each quota reading and every reset event in a local SQLite
+database, so you can see how usage moved over time and exactly when and why a
+reset was requested, including what watch saw when it made an automatic one.
+
+```sh
+ccodex history                       # Reset requests, outcomes, and skips
+ccodex history usage --since 7d --csv > usage.csv
+sqlite3 "$(ccodex history path)"     # Or query it yourself
+```
+
+The database stays on your machine, stores your account only as a short hash,
+and survives upgrades. Pass `--no-history` to any command to skip it. See the
+[usage reference](docs/usage.md#history) for the schema and details.
 
 ## Opt in to earned resets
 
@@ -86,7 +104,8 @@ ccodex watch --auto-reset --max-resets-per-day 2
 Setting a cap alone does not enable automatic resets. `--no-alarm` only mutes
 sound; it does not disable resets when `--auto-reset` is present. Codex decides
 which quota windows are eligible. Pending attempts retain their request IDs so
-retries do not start new redemptions.
+retries do not start new redemptions. Each automatic request is written to the
+history before it is sent; if it cannot be recorded, it is not sent.
 
 To request a reset yourself:
 

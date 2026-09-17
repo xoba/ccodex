@@ -2,7 +2,9 @@
 
 See the [README](../readme.md) for installation and quick setup. `ccodex` and
 `ccodex watch` are read-only by default. Earned resets are consumed only by an
-explicit `ccodex reset` command or `ccodex watch --auto-reset`.
+explicit `ccodex reset` command or `ccodex watch --auto-reset`. Read-only refers
+to your Codex account: every command that reads quota also saves the reading in
+a [local history](#history) unless you pass `--no-history`.
 
 ## Commands
 
@@ -18,6 +20,9 @@ ccodex watch --auto-reset                # Explicitly enable automatic resets
 ccodex watch --no-alarm                  # Silent, read-only monitoring
 ccodex watch --alarm-threshold 10        # Alarm below 10% remaining
 ccodex reset --dry-run                   # Inspect resets without consuming one
+ccodex history                           # Reset requests, outcomes, and skips
+ccodex history usage --csv               # Saved quota readings, for graphing
+ccodex history path                      # Where the history database lives
 ```
 
 `watch` refreshes immediately, then waits between completed refreshes. The default
@@ -92,6 +97,13 @@ watch poll confirms that the quotas which triggered the attempt have recovered.
 Missing quota data does not count as recovery. Any new low-quota period remains
 subject to the daily cap.
 
+Every automatic attempt is also written to the [history](#history) before it
+is sent, with the quota readings that triggered it. If that record cannot be
+saved, watch reports the error, releases the attempt's daily count, and sends
+nothing: a reset spent while nobody is watching must not go unrecorded.
+Monitoring and alarms continue, and watch tries again on later low-quota polls.
+`--no-history` removes this requirement along with the history itself.
+
 Watch prints the attempt's request key to stderr before consumption. A
 `noCredit` or `nothingToReset` outcome is retried on later low-quota polls with
 available resets, using that same key. If the outcome is unknown, watch retains
@@ -115,7 +127,8 @@ Global flags are available on every command:
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
-| `--json` | `false` | Print JSON; one object per refresh in watch mode |
+| `--json` | `false` | Print JSON; one object per line in watch and history |
+| `--no-history` | `false` | Do not save quota readings or reset events |
 | `--codex-bin PATH` | `codex` | Codex executable to use |
 | `--timeout DURATION` | `15s` | Timeout for each refresh, or the whole reset operation |
 
@@ -198,9 +211,97 @@ follow-up quota read.
 
 See the [official earned-reset documentation](https://learn.chatgpt.com/docs/app-server#8-earned-rate-limit-resets-chatgpt).
 
+## History
+
+`ccodex` keeps a local SQLite database of quota readings and reset events so you
+can look back, audit automatic resets, and graph usage. Nothing in it leaves
+your machine. `ccodex history path` prints its location.
+
+```sh
+ccodex history                       # Reset events from the last 30 days
+ccodex history --since all           # Every reset event
+ccodex history usage                 # Quota readings from the last 7 days
+ccodex history usage --since 12h --csv
+ccodex history usage --json           # One JSON object per line
+```
+
+`--since` takes a duration such as `90m`, `12h`, or `7d`, or `all`. Tables show
+local times; CSV and JSON use UTC in RFC 3339 form, oldest first.
+
+### What is saved
+
+`status`, `watch`, and `reset` save one **reading** per quota window (`primary`,
+`secondary`) and individual spend limit (`individual`) after each successful
+refresh: percent used and remaining, window length, reset time, plan, and the
+number of earned resets available. A reading is saved only when one of those
+values differs from the last saved reading for that window, or when 15 minutes
+have passed, so plot readings as steps rather than joining them with sloped
+lines. The reading taken immediately after a reset is always saved. `watch`
+deletes readings older than `--history-days` (default `90`; `0` keeps them
+forever). Your account is stored as a 12-character hash, never as an email
+address or account ID.
+
+**Reset events** are never deleted or changed:
+
+| Event | Meaning |
+| --- | --- |
+| `requested` | A reset request is about to be sent. `reason` holds the trigger: for watch, the threshold, each quota window below it with its remaining percentage, the earned resets available, the daily cap, and whether this retries an earlier request; for `ccodex reset`, `manual` and any `--credit-id`. |
+| `outcome` | Codex answered; `outcome` is one of the [reset outcomes](#redeem-an-earned-reset). |
+| `error` | The request failed or was interrupted, so its outcome is unknown; `detail` holds the error. |
+| `skipped` | Quota was low but watch requested nothing; `detail` says why: `dailyLimitReached`, `noResetAvailable`, `alreadyResetThisPeriod`, `accountChanged`, `noAccountID`, or `budgetUnavailable`. Saved once per low-quota period and reason, not on every poll. |
+
+Events of one attempt share its request `key`. A `requested` event with no later
+`outcome` for the same key is an attempt whose result was never learned. Only
+resets requested by this installation are recorded; one redeemed elsewhere
+appears only as a drop in available resets between readings.
+
+`ccodex reset` records its events on a best-effort basis: if the history cannot
+be written, the command warns and proceeds, because you asked for the reset and
+can see its result. Automatic resets are stricter, as described
+[above](#automatic-resets-in-watch).
+
+### Graphing and SQL
+
+The CSV export loads directly into a spreadsheet, pandas, gnuplot, or DuckDB:
+
+```sh
+ccodex history usage --since 30d --csv > usage.csv
+```
+
+Or query the database itself; any SQLite client can read it while `ccodex` runs:
+
+```sh
+sqlite3 "$(ccodex history path)" "
+  SELECT datetime(ts, 'unixepoch', 'localtime') AS time, 100 - used_pct AS remaining
+  FROM samples WHERE limit_id = 'codex' AND dimension = 'primary' ORDER BY ts"
+
+sqlite3 "$(ccodex history path)" "
+  SELECT datetime(requested_at, 'unixepoch', 'localtime') AS time, mode, outcome, reason
+  FROM resets ORDER BY requested_at"
+```
+
+Tables `samples` and `reset_events` store times as Unix seconds. The `resets`
+view has one row per request key: when it was first requested, why, and its
+latest known outcome. Treat the database as read-only; future versions add
+columns rather than changing existing ones.
+
+### Requirements
+
+`ccodex` writes the history by running the `sqlite3` command-line tool, version
+3.37 or newer. macOS includes it at `/usr/bin/sqlite3`, which `ccodex` always
+uses there; elsewhere it is found on `PATH`. Without it, `ccodex` reports once
+per command that history was not saved and otherwise works normally, except that
+`watch --auto-reset` spends nothing until `sqlite3` is installed or
+`--no-history` is passed.
+
 ## Local state
 
-When automatic resets are enabled, daily accounting is stored in
-`ccodex/auto-resets.json` under the platform's user configuration directory
-(`os.UserConfigDir()` in Go). On macOS, the path is
-`~/Library/Application Support/ccodex/auto-resets.json`.
+`ccodex` keeps its files in a `ccodex` directory under the platform's user
+configuration directory (`os.UserConfigDir()` in Go); on macOS,
+`~/Library/Application Support/ccodex/`. It is created on first use, readable
+only by you, and is not removed by `brew uninstall`.
+
+| File | Written by | Contents |
+| --- | --- | --- |
+| `history.db` (plus `-wal` and `-shm` while in use) | Any command that reads quota or requests a reset, unless `--no-history` is passed | [History](#history) |
+| `auto-resets.json` and its lock files | `watch --auto-reset`, the first time quota is low | Daily accounting for automatic resets |

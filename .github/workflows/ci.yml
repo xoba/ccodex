@@ -52,3 +52,5 @@ jobs:
           test "$("$RUNNER_TEMP/ccodex" --codex-bin "$RUNNER_TEMP/missing-codex" --version)" = "ccodex version ${ccodex_version}"
           "$RUNNER_TEMP/ccodex" --codex-bin "$RUNNER_TEMP/missing-codex" --help
           "$RUNNER_TEMP/ccodex" watch --codex-bin "$RUNNER_TEMP/missing-codex" --help
+          "$RUNNER_TEMP/ccodex" history path
+          "$RUNNER_TEMP/ccodex" history

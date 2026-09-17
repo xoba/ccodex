@@ -19,7 +19,7 @@ type alarmFunc func(context.Context, io.Writer) error
 
 // NewCommand creates a command tree. Configuration is scoped to this invocation.
 func NewCommand() *cobra.Command {
-	return newCommandWithAlarm(codex.Fetch, codex.Reset, playAlarm)
+	return newCommandWithHistory(codex.Fetch, codex.Reset, playAlarm, defaultAutoResetBudget, defaultHistory)
 }
 
 func newCommand(fetch fetchFunc) *cobra.Command {
@@ -35,7 +35,15 @@ func newCommandWithAlarm(fetch fetchFunc, reset resetFunc, alarm alarmFunc) *cob
 }
 
 func newCommandWithBudget(fetch fetchFunc, reset resetFunc, alarm alarmFunc, createBudget func() (autoResetBudget, error)) *cobra.Command {
+	return newCommandWithHistory(fetch, reset, alarm, createBudget, nil)
+}
+
+// newCommandWithHistory records history only when given createHistory, so
+// commands built without one never touch the user's database.
+func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, createBudget func() (autoResetBudget, error), createHistory func() (historyStore, error)) *cobra.Command {
 	var jsonOutput bool
+	var noHistory bool
+	var historyDays int
 	var noAlarm bool
 	var autoReset bool
 	var maxResetsPerDay int
@@ -51,6 +59,16 @@ func newCommandWithBudget(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cre
 			return fmt.Errorf("--timeout must be greater than zero")
 		}
 		return nil
+	}
+	newRecorder := func(cmd *cobra.Command, retention time.Duration) *historyRecorder {
+		if noHistory || createHistory == nil {
+			return nil
+		}
+		store, err := createHistory()
+		if err != nil {
+			store = unavailableHistory{err}
+		}
+		return &historyRecorder{store: store, output: cmd.ErrOrStderr(), timeout: opts.Timeout, retention: retention}
 	}
 	writeSnapshot := func(cmd *cobra.Command, snapshot *codex.Snapshot, watching bool) error {
 		if jsonOutput {
@@ -70,7 +88,11 @@ func newCommandWithBudget(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cre
 		if err != nil {
 			return err
 		}
-		return writeSnapshot(cmd, snapshot, false)
+		if err := writeSnapshot(cmd, snapshot, false); err != nil {
+			return err
+		}
+		newRecorder(cmd, 0).samples(cmd.Context(), snapshot, false)
+		return nil
 	}
 	root := &cobra.Command{
 		Use:           "ccodex",
@@ -83,7 +105,8 @@ func newCommandWithBudget(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cre
 		SilenceErrors: true,
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
-	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Print JSON (one object per refresh in watch mode)")
+	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Print JSON (one object per line in watch and history)")
+	root.PersistentFlags().BoolVar(&noHistory, "no-history", false, "Do not record usage or reset events in the local history database")
 	root.PersistentFlags().StringVar(&opts.Binary, "codex-bin", "codex", "Path to the Codex executable")
 	root.PersistentFlags().DurationVar(&opts.Timeout, "timeout", 15*time.Second, "Maximum duration of each refresh or reset operation")
 	root.AddCommand(&cobra.Command{
@@ -106,7 +129,7 @@ func newCommandWithBudget(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cre
 	watch := &cobra.Command{
 		Use:   "watch",
 		Short: "Refresh continuously until interrupted",
-		Long:  "Fetch immediately, then wait the interval after each refresh.\nMonitoring is read-only by default. Below --alarm-threshold percent remaining,\nsound once per refresh. Use --auto-reset to automatically spend an available\nearned reset, subject to --max-resets-per-day (default 1).\nSuccessful snapshots go to stdout; failures and reset outcomes go to stderr.\nPress Ctrl-C to stop.",
+		Long:  "Fetch immediately, then wait the interval after each refresh.\nMonitoring is read-only by default. Below --alarm-threshold percent remaining,\nsound once per refresh. Use --auto-reset to automatically spend an available\nearned reset, subject to --max-resets-per-day (default 1).\nSuccessful snapshots go to stdout; failures and reset outcomes go to stderr.\nQuota changes and reset events are saved for ccodex history.\nPress Ctrl-C to stop.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validate(); err != nil {
@@ -121,6 +144,10 @@ func newCommandWithBudget(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cre
 			if maxResetsPerDay < 0 {
 				return fmt.Errorf("--max-resets-per-day must be zero or greater")
 			}
+			if historyDays < 0 {
+				return fmt.Errorf("--history-days must be zero or greater")
+			}
+			recorder := newRecorder(cmd, time.Duration(historyDays)*24*time.Hour)
 			var resetState autoResetState
 			var budget autoResetBudget
 			if autoReset && reset != nil && maxResetsPerDay > 0 {
@@ -151,6 +178,7 @@ func newCommandWithBudget(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cre
 					if err := cmd.Context().Err(); err != nil {
 						return err
 					}
+					recorder.samples(cmd.Context(), snapshot, false)
 					if !noAlarm && alarm != nil && hasLowQuota(snapshot, alarmThreshold) {
 						// Decide once over the whole snapshot, so multiple low
 						// windows still produce only one sound this iteration.
@@ -165,11 +193,13 @@ func newCommandWithBudget(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cre
 						}
 					}
 					if autoReset && reset != nil && budget != nil && maxResetsPerDay > 0 {
-						updated, err := applyAutoReset(cmd.Context(), &resetState, snapshot, alarmThreshold, opts, reset, budget, maxResetsPerDay, cmd.ErrOrStderr())
+						updated, err := applyAutoReset(cmd.Context(), &resetState, snapshot, alarmThreshold, opts, reset, budget, maxResetsPerDay, cmd.ErrOrStderr(), recorder)
 						if err != nil {
 							return err
 						}
 						if updated != nil {
+							// Always keep the reading that shows what the reset did.
+							recorder.samples(cmd.Context(), updated, true)
 							if err := writeSnapshot(cmd, updated, true); err != nil {
 								return err
 							}
@@ -191,7 +221,9 @@ func newCommandWithBudget(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cre
 	watch.Flags().BoolVar(&noAlarm, "no-alarm", false, "Disable low-quota alarm sounds")
 	watch.Flags().BoolVar(&autoReset, "auto-reset", false, "Opt in to automatically spending an available earned reset below the alarm threshold")
 	watch.Flags().IntVar(&maxResetsPerDay, "max-resets-per-day", 1, "Maximum automatic resets per local calendar day, shared across watch restarts (0 disables)")
+	watch.Flags().IntVar(&historyDays, "history-days", 90, "Delete usage history older than this many days (0 keeps it forever; reset events are always kept)")
 	root.AddCommand(watch)
-	root.AddCommand(newResetCommand(fetch, reset, &opts, &jsonOutput, validate))
+	root.AddCommand(newResetCommand(fetch, reset, &opts, &jsonOutput, validate, newRecorder))
+	root.AddCommand(newHistoryCommand(createHistory, &jsonOutput))
 	return root
 }

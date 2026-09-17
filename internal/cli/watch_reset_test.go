@@ -223,7 +223,7 @@ func TestAutomaticResetRequiresRecordingRequestID(t *testing.T) {
 	_, err := applyAutoReset(context.Background(), &state, autoSnapshot(99, 1), 5, codex.Options{}, func(context.Context, codex.Options, codex.ResetParams) (*codex.ResetResult, error) {
 		t.Fatal("automatic reset consumed without recording request ID")
 		return nil, nil
-	}, resetbudget.Store{Path: filepath.Join(t.TempDir(), "auto-resets.json")}, 1, failingWriter{})
+	}, resetbudget.Store{Path: filepath.Join(t.TempDir(), "auto-resets.json")}, 1, failingWriter{}, nil)
 	if !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatalf("expected output error, got %v", err)
 	}
@@ -313,7 +313,7 @@ func TestAutomaticResetAccountingFailureFailsClosed(t *testing.T) {
 	updated, err := applyAutoReset(context.Background(), &state, autoSnapshot(99, 1), 5, codex.Options{}, func(context.Context, codex.Options, codex.ResetParams) (*codex.ResetResult, error) {
 		t.Fatal("corrupt accounting allowed automatic reset")
 		return nil, nil
-	}, resetbudget.Store{Path: path}, 1, &stderr)
+	}, resetbudget.Store{Path: path}, 1, &stderr, nil)
 	if err != nil || updated != nil || state.params.IdempotencyKey != "" || !strings.Contains(stderr.String(), "could not read daily limit") {
 		t.Fatalf("accounting failure did not preserve monitoring: updated=%v err=%v stderr=%s", updated, err, stderr.String())
 	}
@@ -328,10 +328,10 @@ func TestAutoResetRetryOutputFailureKeepsPendingReservation(t *testing.T) {
 		calls++
 		return nil, errors.New("lost response")
 	}
-	if _, err := applyAutoReset(context.Background(), &state, autoSnapshot(99, 1), 5, codex.Options{}, reset, store, 1, &stderr); err != nil {
+	if _, err := applyAutoReset(context.Background(), &state, autoSnapshot(99, 1), 5, codex.Options{}, reset, store, 1, &stderr, nil); err != nil {
 		t.Fatal(err)
 	}
-	_, err := applyAutoReset(context.Background(), &state, autoSnapshot(99, 0), 5, codex.Options{}, reset, store, 1, failingWriter{})
+	_, err := applyAutoReset(context.Background(), &state, autoSnapshot(99, 0), 5, codex.Options{}, reset, store, 1, failingWriter{}, nil)
 	if !errors.Is(err, io.ErrClosedPipe) || calls != 1 {
 		t.Fatalf("calls=%d err=%v", calls, err)
 	}
@@ -358,10 +358,10 @@ func TestAutoResetResumesSavedPendingForSameAccount(t *testing.T) {
 		result.Outcome = "alreadyRedeemed"
 		return result, nil
 	}
-	if _, err := applyAutoReset(context.Background(), &original, autoSnapshot(99, 1), 5, codex.Options{}, reset, store, 1, &stderr); err != nil {
+	if _, err := applyAutoReset(context.Background(), &original, autoSnapshot(99, 1), 5, codex.Options{}, reset, store, 1, &stderr, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := applyAutoReset(context.Background(), &restarted, autoSnapshot(99, 0), 5, codex.Options{}, reset, store, 1, &stderr); err != nil {
+	if _, err := applyAutoReset(context.Background(), &restarted, autoSnapshot(99, 0), 5, codex.Options{}, reset, store, 1, &stderr, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(keys) != 2 || keys[0] != keys[1] || restarted.outcome != autoResetConsumed {
@@ -375,13 +375,13 @@ func TestResumedPendingOutputFailureCannotReleaseEarlierReservation(t *testing.T
 	var stderr bytes.Buffer
 	if _, err := applyAutoReset(context.Background(), &original, autoSnapshot(99, 1), 5, codex.Options{}, func(context.Context, codex.Options, codex.ResetParams) (*codex.ResetResult, error) {
 		return nil, errors.New("lost response")
-	}, store, 1, &stderr); err != nil {
+	}, store, 1, &stderr, nil); err != nil {
 		t.Fatal(err)
 	}
 	_, err := applyAutoReset(context.Background(), &restarted, autoSnapshot(99, 0), 5, codex.Options{}, func(context.Context, codex.Options, codex.ResetParams) (*codex.ResetResult, error) {
 		t.Fatal("resumed request dispatched despite output failure")
 		return nil, nil
-	}, store, 1, failingWriter{})
+	}, store, 1, failingWriter{}, nil)
 	if !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatalf("expected output failure, got %v", err)
 	}
@@ -400,17 +400,17 @@ func TestAutoResetAccountChangeCannotReuseAnotherAccountsKey(t *testing.T) {
 		calls++
 		return nil, errors.New("lost response")
 	}
-	if _, err := applyAutoReset(context.Background(), &state, autoSnapshot(99, 1), 5, codex.Options{}, reset, store, 1, &stderr); err != nil {
+	if _, err := applyAutoReset(context.Background(), &state, autoSnapshot(99, 1), 5, codex.Options{}, reset, store, 1, &stderr, nil); err != nil {
 		t.Fatal(err)
 	}
 	other := autoSnapshot(99, 1)
 	otherID := "different-account"
 	other.RateLimits.AccountID = &otherID
-	if _, err := applyAutoReset(context.Background(), &state, other, 5, codex.Options{}, reset, store, 1, &stderr); err != nil {
+	if _, err := applyAutoReset(context.Background(), &state, other, 5, codex.Options{}, reset, store, 1, &stderr, nil); err != nil {
 		t.Fatal(err)
 	}
 	var restarted autoResetState
-	if _, err := applyAutoReset(context.Background(), &restarted, other, 5, codex.Options{}, reset, store, 1, &stderr); err != nil {
+	if _, err := applyAutoReset(context.Background(), &restarted, other, 5, codex.Options{}, reset, store, 1, &stderr, nil); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 || !strings.Contains(stderr.String(), "account changed") || !strings.Contains(stderr.String(), "daily limit of 1 reached") {

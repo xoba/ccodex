@@ -96,6 +96,14 @@ watch poll confirms that the quotas which triggered the attempt have recovered.
 Missing quota data does not count as recovery. Any new low-quota period remains
 subject to the daily cap.
 
+Before sending a request, watch takes a lock shared by every `ccodex` process
+of the same local user and then **reads your quota again**. The request goes
+out only if that reading still shows low quota for the same account. The poll
+that raised the alarm is only a reason to look again: by the time watch holds
+the lock, another watch process may already have spent a reset, or you may have
+redeemed one elsewhere. If quota has recovered, the account has changed, or the
+reading fails, watch reports why, spends nothing, and takes no daily count.
+
 Every automatic attempt is also written to the [history](#history) before it
 is sent, with the quota readings that triggered it. If that record cannot be
 saved, watch reports the error, releases the attempt's daily count, and sends
@@ -111,6 +119,12 @@ zero, to confirm any earlier redemption. It never creates a new key from an
 unresolved attempt. Reset outcomes and warnings go to stderr; `--json` stdout
 contains only snapshot objects, including an extra updated snapshot after a
 reset when the quota refresh succeeds.
+
+You can run more than one watch at a time. Automatic resets are handled by one
+process at a time, the daily cap and any pending request are shared, and the
+confirming read above keeps a second process from acting on a reading older
+than the first one's reset. Each process polls, sounds its own alarm, and saves
+its own checks, so the history shows one line per process per refresh.
 
 The daily count and pending request key persist, so restarting watch does not
 bypass the cap. When restarted with `--auto-reset` on the same account, watch
@@ -246,8 +260,8 @@ A check is one successful quota refresh. **Every one is saved, whether or not
 anything changed**: each `ccodex` or `ccodex status` run, each `watch` refresh,
 and each `reset --dry-run`. Failed refreshes are not saved. `SOURCE` names the
 command: `status`, `watch`, `reset-dry-run`, `reset` for the reading taken right
-after a manual reset, and `auto-reset` for the one right after an automatic
-reset. For each quota window (`primary`, `secondary`) and individual spend limit
+after a manual reset, `confirm` for the one watch takes just before sending an
+automatic reset, and `auto-reset` for the one right after it. For each quota window (`primary`, `secondary`) and individual spend limit
 (`individual`) that Codex reported, a check records percent used and remaining,
 window length, reset time, plan, and the number of earned resets available.
 Your account is stored as a 12-character hash, never as an email address or
@@ -266,7 +280,7 @@ Reset events are never deleted or changed:
 | `requested` | A reset request is about to be sent. `reason` holds the trigger: for watch, the threshold, each quota window below it with its remaining percentage, the earned resets available, the daily cap, and whether this retries an earlier request; for `ccodex reset`, `manual` and any `--credit-id`. |
 | `outcome` | Codex answered; `outcome` is one of the [reset outcomes](#redeem-an-earned-reset). |
 | `error` | The request failed or was interrupted, so its outcome is unknown; `detail` holds the error. |
-| `skipped` | Quota was low but watch requested nothing; `detail` says why: `dailyLimitReached`, `noResetAvailable`, `alreadyResetThisPeriod`, `accountChanged`, `noAccountID`, or `budgetUnavailable`. Saved once per low-quota period and reason, not on every poll. |
+| `skipped` | Quota was low but watch requested nothing; `detail` says why: `dailyLimitReached`, `noResetAvailable`, `alreadyResetThisPeriod`, `quotaRecovered`, `quotaUnconfirmed`, `accountChanged`, `noAccountID`, or `budgetUnavailable`. Saved once per low-quota period and reason, not on every poll. |
 
 Events of one attempt share its request `key`. A `requested` event with no later
 `outcome` for the same key is an attempt whose result was never learned. Only

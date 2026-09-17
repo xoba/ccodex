@@ -193,7 +193,7 @@ func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cr
 						}
 					}
 					if autoReset && reset != nil && budget != nil && maxResetsPerDay > 0 {
-						updated, err := applyAutoReset(cmd.Context(), &resetState, snapshot, alarmThreshold, opts, reset, budget, maxResetsPerDay, cmd.ErrOrStderr(), recorder)
+						updated, err := applyAutoReset(cmd.Context(), &resetState, snapshot, alarmThreshold, opts, reset, budget, maxResetsPerDay, cmd.ErrOrStderr(), recorder, fetch)
 						if err != nil {
 							return err
 						}

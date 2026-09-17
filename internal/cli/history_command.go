@@ -221,6 +221,8 @@ func resetEventDetail(event history.ResetEvent) string {
 			"dailyLimitReached":      "daily limit reached",
 			"alreadyResetThisPeriod": "already reset during this low-quota period",
 			"noResetAvailable":       "no earned reset available",
+			"quotaRecovered":         "quota recovered before the request was sent",
+			"quotaUnconfirmed":       "could not confirm that quota was still low",
 		}[event.Detail]; ok {
 			return text
 		}

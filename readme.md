@@ -105,8 +105,11 @@ ccodex watch --auto-reset --max-resets-per-day 2
 Setting a cap alone does not enable automatic resets. `--no-alarm` only mutes
 sound; it does not disable resets when `--auto-reset` is present. Codex decides
 which quota windows are eligible. Pending attempts retain their request IDs so
-retries do not start new redemptions. Each automatic request is written to the
-history before it is sent; if it cannot be recorded, it is not sent.
+retries do not start new redemptions. Before sending a request, watch reads your
+quota again under a lock shared by every `ccodex` process and spends nothing
+unless it is still low, so several watches cannot each spend a reset on the
+same shortage. Each automatic request is written to the history before it is
+sent; if it cannot be recorded, it is not sent.
 
 To request a reset yourself:
 

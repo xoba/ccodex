@@ -308,6 +308,23 @@ func TestProcessesShareOneDatabase(t *testing.T) {
 	const writers, each = 8, 3
 	var wg sync.WaitGroup
 	errs := make(chan error, writers*each)
+	// A reader, such as ccodex history or a dashboard, must not block writers.
+	stop, readErr := make(chan struct{}), make(chan error, 1)
+	go func() {
+		reader := New(store.Path())
+		for {
+			select {
+			case <-stop:
+				readErr <- nil
+				return
+			default:
+				if err := reader.ResetEvents(context.Background(), time.Time{}, func(ResetEvent) error { return nil }); err != nil {
+					readErr <- err
+					return
+				}
+			}
+		}
+	}()
 	for w := 0; w < writers; w++ {
 		wg.Add(1)
 		go func(w int) {
@@ -322,6 +339,10 @@ func TestProcessesShareOneDatabase(t *testing.T) {
 	}
 	wg.Wait()
 	close(errs)
+	close(stop)
+	if err := <-readErr; err != nil {
+		t.Fatalf("reader failed beside writers: %v", err)
+	}
 	for err := range errs {
 		if err != nil {
 			t.Fatal(err)

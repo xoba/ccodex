@@ -29,9 +29,11 @@ func defaultAutoResetBudget() (autoResetBudget, error) {
 
 // applyAutoReset considers one ordinary watch snapshot. A returned snapshot is
 // a fresh quota read after redemption; it must not rearm this state machine.
-// With a recorder, a request is sent only after the history has saved it, so
-// an unattended redemption cannot go unrecorded.
-func applyAutoReset(ctx context.Context, state *autoResetState, snapshot *codex.Snapshot, threshold float64, opts codex.Options, reset resetFunc, budget autoResetBudget, limit int, output io.Writer, recorder *historyRecorder) (*codex.Snapshot, error) {
+// With fetch, a request is sent only if a reading taken under the operation
+// lock still shows low quota for the same account. With a recorder, it is sent
+// only after the history has saved it, so an unattended redemption cannot go
+// unrecorded.
+func applyAutoReset(ctx context.Context, state *autoResetState, snapshot *codex.Snapshot, threshold float64, opts codex.Options, reset resetFunc, budget autoResetBudget, limit int, output io.Writer, recorder *historyRecorder, fetch fetchFunc) (*codex.Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -106,6 +108,37 @@ func applyAutoReset(ctx context.Context, state *autoResetState, snapshot *codex.
 			recorder.skipped(ctx, account, "noResetAvailable")
 		}
 		return nil, nil
+	}
+	// The poll that led here may predate a reset by another watch process,
+	// which held the operation lock until a moment ago, or one made elsewhere.
+	// Its reading is only a reason to look again: spend on a reading taken
+	// while no other local process can be redeeming.
+	if fetch != nil {
+		fresh, fetchErr := fetch(ctx, opts)
+		if ctx.Err() != nil {
+			*state = before
+			return nil, ctx.Err()
+		}
+		skip, message := "", ""
+		switch {
+		case fetchErr != nil:
+			skip, message = "quotaUnconfirmed", fmt.Sprintf("could not confirm that quota is still low: %v", fetchErr)
+		case fresh == nil || fresh.RateLimits == nil || fresh.RateLimits.AccountID == nil || *fresh.RateLimits.AccountID != accountID:
+			skip, message = "accountChanged", "the signed-in account changed before the request was sent"
+		case !hasLowQuota(fresh, threshold):
+			skip, message = "quotaRecovered", "quota recovered before the request was sent"
+		}
+		if fetchErr == nil {
+			recorder.samples(ctx, fresh, "confirm")
+		}
+		if skip != "" {
+			// No request was sent, so this poll must leave no trace in the state.
+			*state = before
+			recorder.skipped(ctx, account, skip)
+			_, err := fmt.Fprintf(output, "ccodex: automatic reset skipped: %s\n", message)
+			return nil, err
+		}
+		snapshot = fresh
 	}
 	if params.ExpectedAccountID == "" {
 		params.IdempotencyKey = prefix + params.IdempotencyKey

@@ -195,7 +195,7 @@ func TestAutoResetHistoryExplainsTheRequest(t *testing.T) {
 		}
 		return recoveredReset(params, 1), nil
 	}
-	if _, err := applyAutoReset(context.Background(), &state, autoSnapshot(97, 2), 5, codex.Options{}, reset, budget, 1, &stderr, recorder); err != nil {
+	if _, err := applyAutoReset(context.Background(), &state, autoSnapshot(97, 2), 5, codex.Options{}, reset, budget, 1, &stderr, recorder, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := store.eventNames(); !reflect.DeepEqual(got, []string{"requested", "outcome reset"}) {
@@ -217,7 +217,7 @@ func TestAutoResetHistoryExplainsTheRequest(t *testing.T) {
 
 	// Still low after the reset: say why nothing more is spent, but only once.
 	for i := 0; i < 2; i++ {
-		if _, err := applyAutoReset(context.Background(), &state, autoSnapshot(97, 1), 5, codex.Options{}, reset, budget, 1, &stderr, recorder); err != nil {
+		if _, err := applyAutoReset(context.Background(), &state, autoSnapshot(97, 1), 5, codex.Options{}, reset, budget, 1, &stderr, recorder, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -234,7 +234,7 @@ func TestAutoResetIsNotSentWhenHistoryCannotRecordIt(t *testing.T) {
 	updated, err := applyAutoReset(context.Background(), &state, autoSnapshot(97, 2), 5, codex.Options{}, func(context.Context, codex.Options, codex.ResetParams) (*codex.ResetResult, error) {
 		t.Fatal("unrecorded automatic reset was sent")
 		return nil, nil
-	}, budget, 1, &stderr, testRecorder(store, &stderr))
+	}, budget, 1, &stderr, testRecorder(store, &stderr), nil)
 	if err != nil || updated != nil || state.params.IdempotencyKey != "" {
 		t.Fatalf("updated=%v err=%v state=%+v", updated, err, state)
 	}
@@ -252,14 +252,14 @@ func TestUnrecordedRetryKeepsItsPendingReservation(t *testing.T) {
 	budget := resetbudget.Store{Path: filepath.Join(t.TempDir(), "auto-resets.json")}
 	if _, err := applyAutoReset(context.Background(), &original, autoSnapshot(97, 1), 5, codex.Options{}, func(context.Context, codex.Options, codex.ResetParams) (*codex.ResetResult, error) {
 		return nil, errors.New("lost response")
-	}, budget, 1, &stderr, nil); err != nil {
+	}, budget, 1, &stderr, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	store := &fakeHistory{writeErr: errors.New("disk full")}
 	if _, err := applyAutoReset(context.Background(), &restarted, autoSnapshot(97, 0), 5, codex.Options{}, func(context.Context, codex.Options, codex.ResetParams) (*codex.ResetResult, error) {
 		t.Fatal("unrecorded retry was sent")
 		return nil, nil
-	}, budget, 1, &stderr, testRecorder(store, &stderr)); err != nil {
+	}, budget, 1, &stderr, testRecorder(store, &stderr), nil); err != nil {
 		t.Fatal(err)
 	}
 	if allowed, err := budget.Reserve(context.Background(), "another-attempt", 1, time.Now()); err != nil || allowed {
@@ -278,7 +278,7 @@ func TestAutoResetHistoryRecordsFailuresAndSkips(t *testing.T) {
 	}
 	apply := func(state *autoResetState, snapshot *codex.Snapshot, reset resetFunc) {
 		t.Helper()
-		if _, err := applyAutoReset(context.Background(), state, snapshot, 5, codex.Options{}, reset, budget, 1, &stderr, recorder); err != nil {
+		if _, err := applyAutoReset(context.Background(), state, snapshot, 5, codex.Options{}, reset, budget, 1, &stderr, recorder, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -314,6 +314,93 @@ func TestAutoResetHistoryRecordsFailuresAndSkips(t *testing.T) {
 	want := []string{"skipped dailyLimitReached", "skipped dailyLimitReached", "skipped noResetAvailable", "skipped noAccountID"}
 	if got := store.eventNames(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("events=%q", got)
+	}
+}
+
+func TestSecondWatcherConfirmsQuotaBeforeSpending(t *testing.T) {
+	budget := resetbudget.Store{Path: filepath.Join(t.TempDir(), "auto-resets.json")}
+	store := &fakeHistory{}
+	var stderr bytes.Buffer
+	sent, quotaUsed := 0, 97.0
+	reset := func(_ context.Context, _ codex.Options, params codex.ResetParams) (*codex.ResetResult, error) {
+		sent++
+		quotaUsed = 1
+		return recoveredReset(params, 1), nil
+	}
+	fetch := func(context.Context, codex.Options) (*codex.Snapshot, error) { return autoSnapshot(quotaUsed, 2), nil }
+	// Two watch processes polled together and both saw 3% left. The daily cap
+	// of 2 would let each spend a reset.
+	var first, second autoResetState
+	for _, state := range []*autoResetState{&first, &second} {
+		if _, err := applyAutoReset(context.Background(), state, autoSnapshot(97, 2), 5, codex.Options{}, reset, budget, 2, &stderr, testRecorder(store, &stderr), fetch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if sent != 1 || second.params.IdempotencyKey != "" || !strings.Contains(stderr.String(), "quota recovered before the request was sent") {
+		t.Fatalf("sent=%d second=%+v stderr=%q", sent, second, stderr.String())
+	}
+	if got := store.eventNames(); !reflect.DeepEqual(got, []string{"requested", "outcome reset", "skipped quotaRecovered"}) {
+		t.Fatalf("events=%q", got)
+	}
+	var checks []string
+	for _, sample := range store.samples {
+		checks = append(checks, fmt.Sprintf("%s %g", sample.Source, sample.UsedPercent))
+	}
+	if !reflect.DeepEqual(checks, []string{"confirm 97", "confirm 1"}) {
+		t.Fatalf("confirming reads were not saved: %q", checks)
+	}
+	// The second watcher never reserved a daily slot.
+	if allowed, err := budget.Reserve(context.Background(), "another-attempt", 2, time.Now()); err != nil || !allowed {
+		t.Fatalf("allowed=%v err=%v", allowed, err)
+	}
+}
+
+func TestAutoResetNeedsAConfirmedLowReadingForTheSameAccount(t *testing.T) {
+	otherAccount := autoSnapshot(97, 2)
+	id := "other-account"
+	otherAccount.RateLimits.AccountID = &id
+	for name, test := range map[string]struct {
+		fresh   *codex.Snapshot
+		err     error
+		message string
+	}{
+		"failed read":     {nil, errors.New("backend unavailable"), "could not confirm that quota is still low: backend unavailable"},
+		"no quota data":   {&codex.Snapshot{}, nil, "the signed-in account changed"},
+		"another account": {otherAccount, nil, "the signed-in account changed"},
+		"recovered":       {autoSnapshot(10, 2), nil, "quota recovered"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			budget := resetbudget.Store{Path: filepath.Join(t.TempDir(), "auto-resets.json")}
+			var state autoResetState
+			var stderr bytes.Buffer
+			updated, err := applyAutoReset(context.Background(), &state, autoSnapshot(97, 2), 5, codex.Options{}, func(context.Context, codex.Options, codex.ResetParams) (*codex.ResetResult, error) {
+				t.Fatal("reset was sent without a confirmed low reading")
+				return nil, nil
+			}, budget, 1, &stderr, nil, func(context.Context, codex.Options) (*codex.Snapshot, error) { return test.fresh, test.err })
+			if err != nil || updated != nil || state.params.IdempotencyKey != "" || !strings.Contains(stderr.String(), test.message) {
+				t.Fatalf("updated=%v err=%v state=%+v stderr=%q", updated, err, state, stderr.String())
+			}
+			if allowed, err := budget.Reserve(context.Background(), "another-attempt", 1, time.Now()); err != nil || !allowed {
+				t.Fatalf("unsent request took a daily slot: allowed=%v err=%v", allowed, err)
+			}
+		})
+	}
+}
+
+func TestAutoResetRecordsTheConfirmedReadingAsItsReason(t *testing.T) {
+	budget := resetbudget.Store{Path: filepath.Join(t.TempDir(), "auto-resets.json")}
+	store := &fakeHistory{}
+	var state autoResetState
+	var stderr bytes.Buffer
+	if _, err := applyAutoReset(context.Background(), &state, autoSnapshot(97, 2), 5, codex.Options{}, func(_ context.Context, _ codex.Options, params codex.ResetParams) (*codex.ResetResult, error) {
+		return recoveredReset(params, 1), nil
+	}, budget, 1, &stderr, testRecorder(store, &stderr), func(context.Context, codex.Options) (*codex.Snapshot, error) {
+		return autoSnapshot(98.5, 2), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if low := store.events[0].Reason.Low; len(low) != 1 || low[0].RemainingPercent != 1.5 {
+		t.Fatalf("reason=%+v", store.events[0].Reason)
 	}
 }
 
@@ -378,7 +465,8 @@ func TestUnavailableHistoryPausesAutomaticResetsOnly(t *testing.T) {
 	budget := resetbudget.Store{Path: filepath.Join(t.TempDir(), "auto-resets.json")}
 	reads := 0
 	cmd := newCommandWithHistory(func(context.Context, codex.Options) (*codex.Snapshot, error) {
-		if reads++; reads == 3 {
+		// Two low polls, each followed by its confirming read, then the exit.
+		if reads++; reads == 5 {
 			cancel()
 		}
 		return autoSnapshot(97, 2), nil
@@ -397,7 +485,7 @@ func TestUnavailableHistoryPausesAutomaticResetsOnly(t *testing.T) {
 	if err := cmd.ExecuteContext(bounded); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if reads != 3 || strings.Count(stdout.String(), "\n") != 2 || strings.Count(stderr.String(), "was not sent because history could not record it: no home directory") != 2 {
+	if reads != 5 || strings.Count(stdout.String(), "\n") != 2 || strings.Count(stderr.String(), "was not sent because history could not record it: no home directory") != 2 {
 		t.Fatalf("reads=%d stdout=%q stderr=%q", reads, stdout.String(), stderr.String())
 	}
 }
@@ -409,10 +497,11 @@ func TestWatchSavesEveryCheckWithItsSource(t *testing.T) {
 	budget := resetbudget.Store{Path: filepath.Join(t.TempDir(), "auto-resets.json")}
 	reads := 0
 	cmd := newCommandWithHistory(func(context.Context, codex.Options) (*codex.Snapshot, error) {
-		if reads++; reads == 4 {
+		// Read 3 is a low poll and read 4 confirms it before the reset is sent.
+		if reads++; reads == 5 {
 			cancel()
 		}
-		if reads == 3 {
+		if reads == 3 || reads == 4 {
 			return autoSnapshot(97, 1), nil
 		}
 		return autoSnapshot(40, 1), nil
@@ -431,8 +520,9 @@ func TestWatchSavesEveryCheckWithItsSource(t *testing.T) {
 	for _, sample := range store.samples {
 		got = append(got, fmt.Sprintf("%s %g", sample.Source, sample.UsedPercent))
 	}
-	// The unchanged second reading is kept too, as is the one after the reset.
-	if want := []string{"watch 40", "watch 40", "watch 97", "auto-reset 0"}; !reflect.DeepEqual(got, want) {
+	// The unchanged second reading is kept too, as are the confirming read
+	// before the reset and the reading after it.
+	if want := []string{"watch 40", "watch 40", "watch 97", "confirm 97", "auto-reset 0"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("saved checks: %q", got)
 	}
 }

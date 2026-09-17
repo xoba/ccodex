@@ -31,12 +31,9 @@ const (
 	systemBinary = "/usr/bin/sqlite3"
 )
 
-// migrations[v] upgrades a database from schema version v to v+1. The first
-// creates the database and is idempotent; migrationScript guards the others
-// against being applied twice when two processes upgrade at once.
-var migrations = [schemaVersion]string{`PRAGMA journal_mode=WAL;
-BEGIN IMMEDIATE;
-CREATE TABLE IF NOT EXISTS samples (
+// migrations[v] upgrades a database from schema version v to v+1, inside the
+// transaction that migrationScript wraps around it.
+var migrations = [schemaVersion]string{`CREATE TABLE IF NOT EXISTS samples (
   id            INTEGER PRIMARY KEY,
   ts            INTEGER NOT NULL, -- Unix seconds
   account       TEXT NOT NULL,    -- short hash of the account ID; '' if unknown
@@ -72,19 +69,18 @@ FROM reset_events r
 LEFT JOIN reset_events o ON o.id = (
   SELECT MAX(id) FROM reset_events WHERE key = r.key AND event = 'outcome')
 WHERE r.event = 'requested'
-  AND r.id = (SELECT MIN(id) FROM reset_events WHERE key = r.key AND event = 'requested');
-PRAGMA user_version=1;
-COMMIT;
-`,
+  AND r.id = (SELECT MIN(id) FROM reset_events WHERE key = r.key AND event = 'requested');`,
 	// The command that made each check: status, watch, reset, and so on.
 	`ALTER TABLE samples ADD COLUMN source TEXT;`,
 }
 
+// migrationScript applies migrations[version] only if the database is still at
+// that version once the write lock is held. Processes starting together all
+// see the old version; without the guard a slow one would repeat a migration,
+// or set the version back after others had moved past it.
 func migrationScript(version int) string {
-	if version == 0 {
-		return migrations[0]
-	}
-	return fmt.Sprintf(`BEGIN IMMEDIATE;
+	return fmt.Sprintf(`PRAGMA journal_mode=WAL;
+BEGIN IMMEDIATE;
 CREATE TEMP TABLE migration_guard(ok INTEGER CHECK(ok));
 INSERT INTO migration_guard SELECT user_version = %d FROM pragma_user_version;
 %s

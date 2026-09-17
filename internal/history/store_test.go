@@ -273,7 +273,7 @@ func TestOlderDatabaseIsUpgradedOnceByRacingProcesses(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(store.Path()), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.run(ctx, false, migrations[0]+"INSERT INTO samples(ts, account, limit_id, dimension, used_pct) VALUES (1800000000, 'abc123', 'codex', 'primary', 79);\n"); err != nil {
+	if _, err := store.run(ctx, false, migrationScript(0)+"INSERT INTO samples(ts, account, limit_id, dimension, used_pct) VALUES (1800000000, 'abc123', 'codex', 'primary', 79);\n"); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
@@ -305,7 +305,7 @@ func TestOlderDatabaseIsUpgradedOnceByRacingProcesses(t *testing.T) {
 
 func TestProcessesShareOneDatabase(t *testing.T) {
 	store := testStore(t)
-	const writers, each = 4, 5
+	const writers, each = 8, 3
 	var wg sync.WaitGroup
 	errs := make(chan error, writers*each)
 	for w := 0; w < writers; w++ {

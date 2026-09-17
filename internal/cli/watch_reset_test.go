@@ -94,6 +94,70 @@ func TestWatchAutoResetOptInRecoversAndRearms(t *testing.T) {
 	}
 }
 
+func TestOnlyOneAutoResetWatcherRunsAtATime(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	path := filepath.Join(t.TempDir(), "auto-resets.json")
+	run := func(ctx context.Context, fetch fetchFunc, args ...string) error {
+		cmd := newCommandWithBudget(fetch, func(context.Context, codex.Options, codex.ResetParams) (*codex.ResetResult, error) {
+			t.Error("healthy quota was reset")
+			return nil, errors.New("unexpected reset")
+		}, nil, func() (autoResetBudget, error) { return resetbudget.Store{Path: path}, nil })
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		cmd.SetArgs(append([]string{"watch", "--interval", "1s"}, args...))
+		return cmd.ExecuteContext(ctx)
+	}
+	// runUntilFirstPoll reports how a watcher ends once it has been admitted.
+	runUntilFirstPoll := func(args ...string) error {
+		watchCtx, stop := context.WithCancel(ctx)
+		defer stop()
+		return run(watchCtx, func(context.Context, codex.Options) (*codex.Snapshot, error) {
+			stop()
+			return autoSnapshot(10, 1), nil
+		}, args...)
+	}
+
+	firstCtx, stopFirst := context.WithCancel(ctx)
+	defer stopFirst()
+	polled, firstDone := make(chan struct{}, 1), make(chan error, 1)
+	go func() {
+		firstDone <- run(firstCtx, func(context.Context, codex.Options) (*codex.Snapshot, error) {
+			select {
+			case polled <- struct{}{}:
+			default:
+			}
+			return autoSnapshot(10, 1), nil
+		}, "--auto-reset")
+	}()
+	select {
+	case <-polled:
+	case <-ctx.Done():
+		t.Fatal("first watcher never polled")
+	}
+
+	err := run(ctx, func(context.Context, codex.Options) (*codex.Snapshot, error) {
+		t.Error("refused watcher polled anyway")
+		return nil, errors.New("unexpected poll")
+	}, "--auto-reset")
+	if err == nil || !strings.Contains(err.Error(), "another ccodex watch --auto-reset is already running") {
+		t.Fatalf("second automatic-reset watcher: %v", err)
+	}
+	// Watchers that cannot spend a reset are not affected.
+	for _, args := range [][]string{nil, {"--auto-reset=false"}, {"--auto-reset", "--max-resets-per-day", "0"}} {
+		if err := runUntilFirstPoll(args...); !errors.Is(err, context.Canceled) {
+			t.Fatalf("watch %v beside an automatic-reset watcher: %v", args, err)
+		}
+	}
+	stopFirst()
+	if err := <-firstDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("first watcher: %v", err)
+	}
+	if err := runUntilFirstPoll("--auto-reset"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("automatic-reset watcher after the first one exited: %v", err)
+	}
+}
+
 func TestWatchReadOnlyKeepsAlarmWithoutOpeningResetBudget(t *testing.T) {
 	for _, test := range []struct {
 		name string

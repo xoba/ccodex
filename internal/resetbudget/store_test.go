@@ -405,6 +405,47 @@ func TestOperationLockSerializesStoresWithoutBlockingLedger(t *testing.T) {
 	}
 }
 
+func TestWatcherLockAdmitsOneHolderWithoutWaiting(t *testing.T) {
+	store := newTestStore(t)
+	release, err := store.LockWatcher(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another process is refused at once rather than queued behind the holder.
+	other := Store{Path: store.Path, Now: store.Now}
+	started := time.Now()
+	if nextRelease, err := other.LockWatcher(context.Background()); !errors.Is(err, ErrWatcherActive) || nextRelease != nil {
+		t.Fatalf("second watcher was admitted: %v", err)
+	}
+	if waited := time.Since(started); waited > time.Second {
+		t.Fatalf("refusal took %v", waited)
+	}
+	// The slot is separate from the locks that guard each reset and the ledger.
+	operationContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	releaseOperation, err := other.LockOperation(operationContext)
+	if err != nil {
+		t.Fatalf("watcher lock blocked a reset operation: %v", err)
+	}
+	reserve(t, other, "first", 1, testDate, true)
+	if err := releaseOperation(); err != nil {
+		t.Fatal(err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	nextRelease, err := other.LockWatcher(context.Background())
+	if err != nil {
+		t.Fatalf("released watcher slot could not be claimed: %v", err)
+	}
+	if err := nextRelease(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (Store{}).LockWatcher(context.Background()); err == nil || errors.Is(err, ErrWatcherActive) {
+		t.Fatalf("empty path: %v", err)
+	}
+}
+
 func TestZeroLimitAndInvalidInput(t *testing.T) {
 	store := newTestStore(t)
 	reserve(t, store, "first", 0, testDate, false)
@@ -436,15 +477,17 @@ func TestCreatedStateAndDirectoryArePrivate(t *testing.T) {
 		t.Skip("Windows uses ACLs instead of Unix mode bits")
 	}
 	store := newTestStore(t)
-	release, err := store.LockOperation(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := release(); err != nil {
-		t.Fatal(err)
+	for _, lock := range []func(context.Context) (func() error, error){store.LockOperation, store.LockWatcher} {
+		release, err := lock(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := release(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	reserve(t, store, "first", 1, testDate, true)
-	for path, want := range map[string]os.FileMode{store.Path: 0o600, store.Path + ".lock": 0o600, store.Path + ".operation.lock": 0o600, filepath.Dir(store.Path): 0o700} {
+	for path, want := range map[string]os.FileMode{store.Path: 0o600, store.Path + ".lock": 0o600, store.Path + ".operation.lock": 0o600, store.Path + ".watcher.lock": 0o600, filepath.Dir(store.Path): 0o700} {
 		info, err := os.Stat(path)
 		if err != nil || info.Mode().Perm() != want {
 			t.Fatalf("%s should have mode %o: info=%v err=%v", path, want, info, err)

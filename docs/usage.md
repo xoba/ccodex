@@ -120,11 +120,17 @@ unresolved attempt. Reset outcomes and warnings go to stderr; `--json` stdout
 contains only snapshot objects, including an extra updated snapshot after a
 reset when the quota refresh succeeds.
 
-You can run more than one watch at a time. Automatic resets are handled by one
-process at a time, the daily cap and any pending request are shared, and the
-confirming read above keeps a second process from acting on a reading older
-than the first one's reset. Each process polls, sounds its own alarm, and saves
-its own checks, so the history shows one line per process per refresh.
+**Only one `watch --auto-reset` may run at a time** for a local user. A second
+one exits immediately with an error and spends nothing; stop the first, or run
+the second without `--auto-reset`. The slot belongs to the running process, so
+it is freed when that process ends for any reason, including a crash or
+`kill -9`; the empty lock file left behind never needs cleaning up.
+`--auto-reset` together with `--max-resets-per-day 0` cannot spend anything and
+does not take the slot.
+
+Any number of read-only watches may run beside it. Each polls, sounds its own
+alarm, and saves its own checks, so the history shows one line per process per
+refresh.
 
 The daily count and pending request key persist, so restarting watch does not
 bypass the cap. When restarted with `--auto-reset` on the same account, watch
@@ -338,4 +344,6 @@ only by you, and is not removed by `brew uninstall`.
 | File | Written by | Contents |
 | --- | --- | --- |
 | `history.db` (plus `-wal` and `-shm` while in use) | Any command that reads quota or requests a reset, unless `--no-history` is passed | [History](#history) |
-| `auto-resets.json` and its lock files | `watch --auto-reset`, the first time quota is low | Daily accounting for automatic resets |
+| `auto-resets.json` | `watch --auto-reset`, the first time quota is low | Daily accounting for automatic resets |
+| `auto-resets.json.watcher.lock` | `watch --auto-reset`, at startup | Empty; held while the one automatic-reset watcher runs |
+| `auto-resets.json.lock`, `auto-resets.json.operation.lock` | `watch --auto-reset`, the first time quota is low | Empty; guard the accounting file and each reset attempt |

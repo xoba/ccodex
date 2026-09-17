@@ -4,6 +4,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -12,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/xoba/ccodex/internal/buildinfo"
 	"github.com/xoba/ccodex/internal/codex"
+	"github.com/xoba/ccodex/internal/resetbudget"
 )
 
 type fetchFunc func(context.Context, codex.Options) (*codex.Snapshot, error)
@@ -153,7 +155,23 @@ func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cr
 			if autoReset && reset != nil && maxResetsPerDay > 0 {
 				var err error
 				budget, err = createBudget()
+				if err == nil {
+					// One automatic-reset watcher per user. The operation lock and
+					// the confirming read already keep two from spending twice;
+					// refusing the second here keeps that from resting on timing.
+					var release func() error
+					release, err = budget.LockWatcher(cmd.Context())
+					if errors.Is(err, resetbudget.ErrWatcherActive) {
+						return fmt.Errorf("another ccodex watch --auto-reset is already running for this user; stop it first, or run watch without --auto-reset to monitor only")
+					}
+					if err == nil {
+						defer release()
+					}
+				}
 				if err != nil {
+					// Without the budget or the lock, monitoring continues but
+					// nothing may be spent.
+					budget = nil
 					if _, writeErr := fmt.Fprintf(cmd.ErrOrStderr(), "ccodex: automatic resets unavailable: %v\n", err); writeErr != nil {
 						return writeErr
 					}

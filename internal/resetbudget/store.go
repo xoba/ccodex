@@ -24,6 +24,11 @@ const (
 	dateLayout   = "2006-01-02"
 )
 
+// ErrWatcherActive reports that another process holds the watcher lock.
+var ErrWatcherActive = errors.New("another automatic-reset watcher is running")
+
+var errLockNotAcquired = errors.New("automatic-reset budget lock was not acquired")
+
 // Store is shared by every watch process using Path. The adjacent .lock file
 // must remain at a stable path while the JSON state is atomically replaced.
 type Store struct {
@@ -55,7 +60,22 @@ func DefaultPath() (string, error) {
 // processes. Hold it from pending-key lookup through recording the outcome.
 // Ledger methods use a separate lock and remain usable while this lock is held.
 func (s Store) LockOperation(ctx context.Context) (release func() error, err error) {
-	lock, err := s.acquireLock(ctx, ".operation.lock")
+	lock, err := s.acquireLock(ctx, ".operation.lock", true)
+	if err != nil {
+		return nil, err
+	}
+	return lock.Unlock, nil
+}
+
+// LockWatcher claims this user's single automatic-reset watcher slot, or
+// returns ErrWatcherActive at once if another process has it. Hold it for the
+// life of the watcher. The operating system drops the lock when its process
+// exits, so a crashed watcher cannot leave the slot taken.
+func (s Store) LockWatcher(ctx context.Context) (release func() error, err error) {
+	lock, err := s.acquireLock(ctx, ".watcher.lock", false)
+	if errors.Is(err, errLockNotAcquired) {
+		return nil, ErrWatcherActive
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +189,7 @@ func (s Store) Complete(ctx context.Context, key string, outcome string) error {
 }
 
 func (s Store) withLedger(ctx context.Context, update func(*ledger) (bool, error)) (err error) {
-	lock, err := s.acquireLock(ctx, ".lock")
+	lock, err := s.acquireLock(ctx, ".lock", true)
 	if err != nil {
 		return err
 	}
@@ -192,7 +212,9 @@ func (s Store) withLedger(ctx context.Context, update func(*ledger) (bool, error
 	return s.write(state)
 }
 
-func (s Store) acquireLock(ctx context.Context, suffix string) (*flock.Flock, error) {
+// acquireLock waits for the lock until ctx is done, or with wait unset tries
+// once and returns errLockNotAcquired if another process holds it.
+func (s Store) acquireLock(ctx context.Context, suffix string, wait bool) (*flock.Flock, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -207,12 +229,18 @@ func (s Store) acquireLock(ctx context.Context, suffix string) (*flock.Flock, er
 		return nil, fmt.Errorf("protect automatic-reset budget directory: %w", err)
 	}
 	lock := flock.New(s.Path+suffix, flock.SetPermissions(0o600))
-	locked, err := lock.TryLockContext(ctx, 25*time.Millisecond)
+	var locked bool
+	var err error
+	if wait {
+		locked, err = lock.TryLockContext(ctx, 25*time.Millisecond)
+	} else {
+		locked, err = lock.TryLock()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("lock automatic-reset budget%s: %w", suffix, err)
 	}
 	if !locked {
-		return nil, errors.New("automatic-reset budget lock was not acquired")
+		return nil, errLockNotAcquired
 	}
 	if err := ctx.Err(); err != nil {
 		_ = lock.Unlock()

@@ -13,6 +13,7 @@ import (
 )
 
 type autoResetBudget interface {
+	LockWatcher(context.Context) (func() error, error)
 	LockOperation(context.Context) (func() error, error)
 	Pending(context.Context, string) (string, error)
 	Reserve(context.Context, string, int, time.Time) (bool, error)

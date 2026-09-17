@@ -20,9 +20,8 @@ ccodex watch --auto-reset                # Explicitly enable automatic resets
 ccodex watch --no-alarm                  # Silent, read-only monitoring
 ccodex watch --alarm-threshold 10        # Alarm below 10% remaining
 ccodex reset --dry-run                   # Inspect resets without consuming one
-ccodex history                           # Reset requests, outcomes, and skips
-ccodex history usage --csv               # Saved quota readings, for graphing
-ccodex history path                      # Where the history database lives
+ccodex history                           # Every saved check and reset event
+ccodex history --checks --csv            # Every reading as CSV, for graphing
 ```
 
 `watch` refreshes immediately, then waits between completed refreshes. The default
@@ -128,7 +127,7 @@ Global flags are available on every command:
 | Flag | Default | Purpose |
 | --- | --- | --- |
 | `--json` | `false` | Print JSON; one object per line in watch and history |
-| `--no-history` | `false` | Do not save quota readings or reset events |
+| `--no-history` | `false` | Do not save checks or reset events |
 | `--codex-bin PATH` | `codex` | Codex executable to use |
 | `--timeout DURATION` | `15s` | Timeout for each refresh, or the whole reset operation |
 
@@ -213,35 +212,54 @@ See the [official earned-reset documentation](https://learn.chatgpt.com/docs/app
 
 ## History
 
-`ccodex` keeps a local SQLite database of quota readings and reset events so you
-can look back, audit automatic resets, and graph usage. Nothing in it leaves
-your machine. `ccodex history path` prints its location.
+`ccodex` saves **every successful check** and **every reset event** in a local
+SQLite database, so you can look back, audit automatic resets, and graph usage.
+Nothing in it leaves your machine. One command shows it:
 
 ```sh
-ccodex history                       # Reset events from the last 30 days
-ccodex history --since all           # Every reset event
-ccodex history usage                 # Quota readings from the last 7 days
-ccodex history usage --since 12h --csv
-ccodex history usage --json           # One JSON object per line
+ccodex history                       # Everything, oldest first
+ccodex history --since 24h           # Only the last day: 90m, 12h, 7d, or all
+ccodex history --checks              # Only checks
+ccodex history --resets              # Only reset events
+ccodex history --csv                 # The same records as CSV
+ccodex history --json                # The same records as JSON, one per line
+ccodex history --path                # Where the database lives
 ```
 
-`--since` takes a duration such as `90m`, `12h`, or `7d`, or `all`. Tables show
-local times; CSV and JSON use UTC in RFC 3339 form, oldest first.
+```text
+TIME                 SOURCE      ACCOUNT       EVENT            DETAIL
+2026-09-17 14:02:12  watch       6fd0ab8ee8d2  check            codex 5h 3.5%, 7d 59% left; earned resets: 2
+2026-09-17 14:03:12  watch       6fd0ab8ee8d2  reset requested  codex primary 3.5% left; threshold 5%; earned resets: 2 (request …333344445555)
+2026-09-17 14:03:14  watch                     reset outcome    reset (request …333344445555)
+2026-09-17 14:03:14  auto-reset  6fd0ab8ee8d2  check            codex 5h 100%, 7d 59% left; earned resets: 1
+```
 
-### What is saved
+The table shows local times; CSV and JSON use UTC in RFC 3339 form. CSV always
+has the same columns: `type` is `check` or `reset`, a check has one row per
+quota window, and columns that do not apply are empty. JSON has one object per
+check, with a `windows` array, or per reset event. Filter with `--checks` to get
+only the rows you would graph.
 
-`status`, `watch`, and `reset` save one **reading** per quota window (`primary`,
-`secondary`) and individual spend limit (`individual`) after each successful
-refresh: percent used and remaining, window length, reset time, plan, and the
-number of earned resets available. A reading is saved only when one of those
-values differs from the last saved reading for that window, or when 15 minutes
-have passed, so plot readings as steps rather than joining them with sloped
-lines. The reading taken immediately after a reset is always saved. `watch`
-deletes readings older than `--history-days` (default `90`; `0` keeps them
-forever). Your account is stored as a 12-character hash, never as an email
-address or account ID.
+### Checks
 
-**Reset events** are never deleted or changed:
+A check is one successful quota refresh. **Every one is saved, whether or not
+anything changed**: each `ccodex` or `ccodex status` run, each `watch` refresh,
+and each `reset --dry-run`. Failed refreshes are not saved. `SOURCE` names the
+command: `status`, `watch`, `reset-dry-run`, `reset` for the reading taken right
+after a manual reset, and `auto-reset` for the one right after an automatic
+reset. For each quota window (`primary`, `secondary`) and individual spend limit
+(`individual`) that Codex reported, a check records percent used and remaining,
+window length, reset time, plan, and the number of earned resets available.
+Your account is stored as a 12-character hash, never as an email address or
+account ID.
+
+`watch` deletes checks older than `--history-days` (default `90`; `0` keeps them
+forever). At the default one-minute interval a day of `watch` adds roughly
+half a megabyte.
+
+### Reset events
+
+Reset events are never deleted or changed:
 
 | Event | Meaning |
 | --- | --- |
@@ -253,7 +271,7 @@ address or account ID.
 Events of one attempt share its request `key`. A `requested` event with no later
 `outcome` for the same key is an attempt whose result was never learned. Only
 resets requested by this installation are recorded; one redeemed elsewhere
-appears only as a drop in available resets between readings.
+appears only as a drop in earned resets between checks.
 
 `ccodex reset` records its events on a best-effort basis: if the history cannot
 be written, the command warns and proceeds, because you asked for the reset and
@@ -262,28 +280,30 @@ can see its result. Automatic resets are stricter, as described
 
 ### Graphing and SQL
 
-The CSV export loads directly into a spreadsheet, pandas, gnuplot, or DuckDB:
+The CSV loads directly into a spreadsheet, pandas, gnuplot, or DuckDB:
 
 ```sh
-ccodex history usage --since 30d --csv > usage.csv
+ccodex history --checks --since 30d --csv > usage.csv
 ```
 
 Or query the database itself; any SQLite client can read it while `ccodex` runs:
 
 ```sh
-sqlite3 "$(ccodex history path)" "
-  SELECT datetime(ts, 'unixepoch', 'localtime') AS time, 100 - used_pct AS remaining
+sqlite3 "$(ccodex history --path)" "
+  SELECT datetime(ts, 'unixepoch', 'localtime') AS time, source, 100 - used_pct AS remaining
   FROM samples WHERE limit_id = 'codex' AND dimension = 'primary' ORDER BY ts"
 
-sqlite3 "$(ccodex history path)" "
+sqlite3 "$(ccodex history --path)" "
   SELECT datetime(requested_at, 'unixepoch', 'localtime') AS time, mode, outcome, reason
   FROM resets ORDER BY requested_at"
 ```
 
-Tables `samples` and `reset_events` store times as Unix seconds. The `resets`
-view has one row per request key: when it was first requested, why, and its
-latest known outcome. Treat the database as read-only; future versions add
-columns rather than changing existing ones.
+Table `samples` has one row per quota window of each check, and `reset_events`
+one row per event, with `mode` `auto` for watch and `manual` for `ccodex reset`.
+Times are Unix seconds. The `resets` view has one row per request key: when it
+was first requested, why, and its latest known outcome. Treat the database as
+read-only; new versions add columns rather than changing existing ones, so a
+`watch` left running across an upgrade keeps recording.
 
 ### Requirements
 

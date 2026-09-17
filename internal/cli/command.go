@@ -91,7 +91,7 @@ func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cr
 		if err := writeSnapshot(cmd, snapshot, false); err != nil {
 			return err
 		}
-		newRecorder(cmd, 0).samples(cmd.Context(), snapshot, false)
+		newRecorder(cmd, 0).samples(cmd.Context(), snapshot, "status")
 		return nil
 	}
 	root := &cobra.Command{
@@ -129,7 +129,7 @@ func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cr
 	watch := &cobra.Command{
 		Use:   "watch",
 		Short: "Refresh continuously until interrupted",
-		Long:  "Fetch immediately, then wait the interval after each refresh.\nMonitoring is read-only by default. Below --alarm-threshold percent remaining,\nsound once per refresh. Use --auto-reset to automatically spend an available\nearned reset, subject to --max-resets-per-day (default 1).\nSuccessful snapshots go to stdout; failures and reset outcomes go to stderr.\nQuota changes and reset events are saved for ccodex history.\nPress Ctrl-C to stop.",
+		Long:  "Fetch immediately, then wait the interval after each refresh.\nMonitoring is read-only by default. Below --alarm-threshold percent remaining,\nsound once per refresh. Use --auto-reset to automatically spend an available\nearned reset, subject to --max-resets-per-day (default 1).\nSuccessful snapshots go to stdout; failures and reset outcomes go to stderr.\nEvery check and reset event is saved for ccodex history.\nPress Ctrl-C to stop.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validate(); err != nil {
@@ -178,7 +178,7 @@ func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cr
 					if err := cmd.Context().Err(); err != nil {
 						return err
 					}
-					recorder.samples(cmd.Context(), snapshot, false)
+					recorder.samples(cmd.Context(), snapshot, "watch")
 					if !noAlarm && alarm != nil && hasLowQuota(snapshot, alarmThreshold) {
 						// Decide once over the whole snapshot, so multiple low
 						// windows still produce only one sound this iteration.
@@ -198,8 +198,7 @@ func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cr
 							return err
 						}
 						if updated != nil {
-							// Always keep the reading that shows what the reset did.
-							recorder.samples(cmd.Context(), updated, true)
+							recorder.samples(cmd.Context(), updated, "auto-reset")
 							if err := writeSnapshot(cmd, updated, true); err != nil {
 								return err
 							}
@@ -221,7 +220,7 @@ func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cr
 	watch.Flags().BoolVar(&noAlarm, "no-alarm", false, "Disable low-quota alarm sounds")
 	watch.Flags().BoolVar(&autoReset, "auto-reset", false, "Opt in to automatically spending an available earned reset below the alarm threshold")
 	watch.Flags().IntVar(&maxResetsPerDay, "max-resets-per-day", 1, "Maximum automatic resets per local calendar day, shared across watch restarts (0 disables)")
-	watch.Flags().IntVar(&historyDays, "history-days", 90, "Delete usage history older than this many days (0 keeps it forever; reset events are always kept)")
+	watch.Flags().IntVar(&historyDays, "history-days", 90, "Delete saved checks older than this many days (0 keeps them forever; reset events are always kept)")
 	root.AddCommand(watch)
 	root.AddCommand(newResetCommand(fetch, reset, &opts, &jsonOutput, validate, newRecorder))
 	root.AddCommand(newHistoryCommand(createHistory, &jsonOutput))

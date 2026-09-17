@@ -43,7 +43,7 @@ func newResetCommand(fetch fetchFunc, reset resetFunc, opts *codex.Options, json
 				if err != nil {
 					return err
 				}
-				newRecorder(cmd, 0).samples(cmd.Context(), snapshot, false)
+				newRecorder(cmd, 0).samples(cmd.Context(), snapshot, "reset-dry-run")
 				if *jsonOutput {
 					return writeJSON(cmd.OutOrStdout(), struct {
 						DryRun   bool            `json:"dryRun"`
@@ -84,7 +84,7 @@ func newResetCommand(fetch fetchFunc, reset resetFunc, opts *codex.Options, json
 			recorder.log(cmd.Context(), history.ResetEvent{
 				Key: params.IdempotencyKey, Event: "outcome", Mode: "manual", Account: accountHash(result.RateLimits), Outcome: result.Outcome,
 			})
-			recorder.samples(cmd.Context(), &codex.Snapshot{FetchedAt: result.FetchedAt, RateLimits: result.RateLimits, Account: result.Account}, true)
+			recorder.samples(cmd.Context(), &codex.Snapshot{FetchedAt: result.FetchedAt, RateLimits: result.RateLimits, Account: result.Account}, "reset")
 			if *jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), result)
 			}

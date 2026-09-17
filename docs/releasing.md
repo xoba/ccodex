@@ -113,8 +113,9 @@ system "go", "build", *std_go_args(
 
 The formula must also declare `uses_from_macos "sqlite"`, because `ccodex`
 records its history through the `sqlite3` tool. On macOS this uses the system
-copy and installs nothing; on Linux it installs Homebrew's. `ccodex history path`
-needs neither Codex nor `sqlite3`, which makes it a suitable formula test.
+copy and installs nothing; on Linux it installs Homebrew's. `ccodex history
+--path` needs neither Codex nor `sqlite3`, which makes it a suitable formula
+test.
 
 Check that Homebrew's Go dependency meets the minimum version in `go.mod`. Test
 the edited formula before pushing it:

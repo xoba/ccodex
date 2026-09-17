@@ -131,41 +131,35 @@ func TestResetsViewPairsRequestWithLatestOutcome(t *testing.T) {
 	}
 }
 
-func TestSamplesAreSavedOnChangeOrHeartbeat(t *testing.T) {
+func TestEveryCheckIsSaved(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	at := time.Unix(1_800_000_000, 0).UTC()
-	record := func(s *Store, force bool, samples ...Sample) {
-		t.Helper()
-		if err := s.RecordSamples(ctx, samples, force); err != nil {
+	// Identical readings, seconds apart, from two processes: all are kept.
+	for i, s := range []*Store{store, New(store.Path()), store} {
+		primary, secondary := sample(at.Add(time.Duration(i)*time.Second), "primary", 40), sample(at.Add(time.Duration(i)*time.Second), "secondary", 10)
+		primary.Source, secondary.Source = "watch", "watch"
+		if i == 2 {
+			primary.Source, secondary.Source = "status", "status"
+		}
+		if err := s.RecordSamples(ctx, []Sample{primary, secondary}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	record(store, false, sample(at, "primary", 40), sample(at, "secondary", 10))
-	// Another process polling the same account must not duplicate the rows.
-	record(New(store.Path()), false, sample(at.Add(time.Minute), "primary", 40), sample(at.Add(time.Minute), "secondary", 10))
-	record(store, false, sample(at.Add(2*time.Minute), "primary", 41), sample(at.Add(2*time.Minute), "secondary", 10))
-	record(store, false, sample(at.Add(2*time.Minute+Heartbeat-time.Second), "primary", 41))
-	record(store, false, sample(at.Add(2*time.Minute+Heartbeat), "primary", 41))
-	record(store, true, sample(at.Add(3*time.Minute+Heartbeat), "primary", 41))
-	other := sample(at.Add(4*time.Minute+Heartbeat), "primary", 41)
-	other.Account = "other"
-	record(store, false, other)
-
 	var got []string
 	for _, s := range readSamples(t, store) {
-		got = append(got, fmt.Sprintf("%s %s %s %g", s.Time.Sub(at), s.Account, s.Dimension, s.UsedPercent))
+		got = append(got, fmt.Sprintf("%s %s %s %g", s.Time.Sub(at), s.Source, s.Dimension, s.UsedPercent))
 	}
 	want := []string{
-		"0s abc123 primary 40", "0s abc123 secondary 10", "2m0s abc123 primary 41",
-		"17m0s abc123 primary 41", "18m0s abc123 primary 41", "19m0s other primary 41",
+		"0s watch primary 40", "0s watch secondary 10", "1s watch primary 40", "1s watch secondary 10",
+		"2s status primary 40", "2s status secondary 10",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("saved samples:\n got %q\nwant %q", got, want)
 	}
 	first := readSamples(t, store)[0]
-	if want := sample(at, "primary", 40); first.RemainingPercent != 60 || first.Plan != "pro" || *first.WindowMins != 300 ||
-		*first.ResetCredits != 2 || !first.ResetsAt.Equal(*want.ResetsAt) {
+	if want := sample(at, "primary", 40); first.RemainingPercent != 60 || first.Plan != "pro" || first.Account != "abc123" ||
+		*first.WindowMins != 300 || *first.ResetCredits != 2 || !first.ResetsAt.Equal(*want.ResetsAt) {
 		t.Fatalf("sample fields changed in storage: %+v", first)
 	}
 }
@@ -174,10 +168,8 @@ func TestSamplesKeepMissingValuesMissing(t *testing.T) {
 	store := testStore(t)
 	at := time.Unix(1_800_000_000, 0).UTC()
 	want := Sample{Time: at, LimitID: "codex", Dimension: "individual", UsedPercent: 100, RemainingPercent: 0}
-	for i := 0; i < 2; i++ {
-		if err := store.RecordSamples(context.Background(), []Sample{want}, false); err != nil {
-			t.Fatal(err)
-		}
+	if err := store.RecordSamples(context.Background(), []Sample{want}); err != nil {
+		t.Fatal(err)
 	}
 	if got := readSamples(t, store); !reflect.DeepEqual(got, []Sample{want}) {
 		t.Fatalf("got %+v", got)
@@ -188,10 +180,10 @@ func TestPruneDeletesOldSamplesButNeverResetEvents(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	at := time.Unix(1_800_000_000, 0)
-	if err := store.RecordSamples(ctx, []Sample{sample(at, "primary", 1)}, true); err != nil {
+	if err := store.RecordSamples(ctx, []Sample{sample(at, "primary", 1)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecordSamples(ctx, []Sample{sample(at.Add(time.Hour), "primary", 2)}, true); err != nil {
+	if err := store.RecordSamples(ctx, []Sample{sample(at.Add(time.Hour), "primary", 2)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RecordResetEvent(ctx, ResetEvent{Time: at, Key: "k", Event: "requested", Mode: "manual"}); err != nil {
@@ -241,22 +233,73 @@ func TestReadingCreatesNothing(t *testing.T) {
 	}
 }
 
-func TestNewerSchemaIsRefused(t *testing.T) {
+func TestNewerSchemaIsUsedUnlessItsEraChanged(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	if err := store.RecordResetEvent(ctx, ResetEvent{Time: time.Now(), Event: "skipped", Mode: "auto"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.run(ctx, false, fmt.Sprintf("PRAGMA user_version=%d;\n", schemaVersion+1)); err != nil {
+	// A later additive schema: a watch left running across an upgrade.
+	if _, err := store.run(ctx, false, fmt.Sprintf("ALTER TABLE samples ADD COLUMN later TEXT;\nPRAGMA user_version=%d;\n", schemaVersion+1)); err != nil {
 		t.Fatal(err)
 	}
-	upgraded := New(store.Path())
-	err := upgraded.RecordSamples(ctx, []Sample{sample(time.Now(), "primary", 1)}, true)
-	if err == nil || !strings.Contains(err.Error(), "upgrade ccodex") {
-		t.Fatalf("write to a newer schema: %v", err)
+	older := New(store.Path())
+	if err := older.RecordSamples(ctx, []Sample{sample(time.Now(), "primary", 1)}); err != nil {
+		t.Fatalf("write to a later additive schema: %v", err)
 	}
-	if err := upgraded.ResetEvents(ctx, time.Time{}, func(ResetEvent) error { return nil }); err == nil {
-		t.Fatal("read of a newer schema succeeded")
+	if samples, events := readSamples(t, older), readEvents(t, older); len(samples) != 1 || len(events) != 1 {
+		t.Fatalf("samples=%v events=%v", samples, events)
+	}
+	if output, err := store.run(ctx, true, "PRAGMA user_version;\n"); err != nil || strings.TrimSpace(string(output)) != fmt.Sprint(schemaVersion+1) {
+		t.Fatalf("older build changed the schema version: %q err=%v", output, err)
+	}
+
+	if _, err := store.run(ctx, false, fmt.Sprintf("PRAGMA user_version=%d;\n", schemaEra)); err != nil {
+		t.Fatal(err)
+	}
+	incompatible := New(store.Path())
+	err := incompatible.RecordSamples(ctx, []Sample{sample(time.Now(), "primary", 1)})
+	if err == nil || !strings.Contains(err.Error(), "upgrade ccodex") {
+		t.Fatalf("write to a later era: %v", err)
+	}
+	if err := incompatible.ResetEvents(ctx, time.Time{}, func(ResetEvent) error { return nil }); err == nil {
+		t.Fatal("read of a later era succeeded")
+	}
+}
+
+func TestOlderDatabaseIsUpgradedOnceByRacingProcesses(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	if err := os.MkdirAll(filepath.Dir(store.Path()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.run(ctx, false, migrations[0]+"INSERT INTO samples(ts, account, limit_id, dimension, used_pct) VALUES (1800000000, 'abc123', 'codex', 'primary', 79);\n"); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 4)
+	for i := 0; i < cap(errs); i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			next := sample(time.Unix(1_800_000_100+int64(i), 0), "primary", 80)
+			next.Source = "watch"
+			errs <- New(store.Path()).RecordSamples(ctx, []Sample{next})
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	samples := readSamples(t, store)
+	if len(samples) != 5 || samples[0].Source != "" || samples[0].UsedPercent != 79 || samples[1].Source != "watch" {
+		t.Fatalf("samples after upgrade: %+v", samples)
+	}
+	if output, err := store.run(ctx, true, "PRAGMA user_version;\n"); err != nil || strings.TrimSpace(string(output)) != fmt.Sprint(schemaVersion) {
+		t.Fatalf("schema version %q err=%v", output, err)
 	}
 }
 

@@ -21,16 +21,19 @@ import (
 )
 
 const (
-	schemaVersion = 1
-	// Heartbeat bounds how long an unchanged quota dimension goes unrecorded.
-	Heartbeat = 15 * time.Minute
+	schemaVersion = 2
+	// A database whose version lies in a later era was changed in a way this
+	// build cannot use safely. Additive changes stay within an era, so a watch
+	// left running across an upgrade keeps recording.
+	schemaEra = 1000
 	// Apple's sqlite3 is preferred over a newer one on PATH so every macOS
 	// user gets the same, known feature set.
 	systemBinary = "/usr/bin/sqlite3"
 )
 
-// migrations[v] upgrades a database from schema version v to v+1. Two processes
-// may apply the same migration, so each one must be idempotent.
+// migrations[v] upgrades a database from schema version v to v+1. The first
+// creates the database and is idempotent; migrationScript guards the others
+// against being applied twice when two processes upgrade at once.
 var migrations = [schemaVersion]string{`PRAGMA journal_mode=WAL;
 BEGIN IMMEDIATE;
 CREATE TABLE IF NOT EXISTS samples (
@@ -72,11 +75,29 @@ WHERE r.event = 'requested'
   AND r.id = (SELECT MIN(id) FROM reset_events WHERE key = r.key AND event = 'requested');
 PRAGMA user_version=1;
 COMMIT;
-`}
+`,
+	// The command that made each check: status, watch, reset, and so on.
+	`ALTER TABLE samples ADD COLUMN source TEXT;`,
+}
 
-// Sample is one quota dimension as reported by one successful refresh.
+func migrationScript(version int) string {
+	if version == 0 {
+		return migrations[0]
+	}
+	return fmt.Sprintf(`BEGIN IMMEDIATE;
+CREATE TEMP TABLE migration_guard(ok INTEGER CHECK(ok));
+INSERT INTO migration_guard SELECT user_version = %d FROM pragma_user_version;
+%s
+PRAGMA user_version=%d;
+COMMIT;
+`, version, migrations[version], version+1)
+}
+
+// Sample is one quota dimension as reported by one successful check. Samples
+// of the same check share Time, Source, and Account.
 type Sample struct {
 	Time             time.Time  `json:"time"`
+	Source           string     `json:"source,omitempty"`
 	Account          string     `json:"account"`
 	Plan             string     `json:"plan,omitempty"`
 	LimitID          string     `json:"limitId"`
@@ -125,6 +146,7 @@ type LowQuota struct {
 // Unix seconds.
 type sampleRow struct {
 	TS           int64   `json:"ts"`
+	Source       string  `json:"source"`
 	Account      string  `json:"account"`
 	Plan         string  `json:"plan"`
 	LimitID      string  `json:"limitId"`
@@ -174,18 +196,15 @@ func DefaultPath() (string, error) {
 
 func (s *Store) Path() string { return s.path }
 
-// RecordSamples appends the samples of one refresh. Unless force is set, a
-// sample that repeats the latest saved values for its account, limit, and
-// dimension is dropped until Heartbeat has passed, even if another process
-// saved them.
-func (s *Store) RecordSamples(ctx context.Context, samples []Sample, force bool) error {
+// RecordSamples appends the samples of one check.
+func (s *Store) RecordSamples(ctx context.Context, samples []Sample) error {
 	if len(samples) == 0 {
 		return nil
 	}
 	rows := make([]sampleRow, 0, len(samples))
 	for _, sample := range samples {
 		row := sampleRow{
-			TS: sample.Time.Unix(), Account: sample.Account, Plan: sample.Plan,
+			TS: sample.Time.Unix(), Source: sample.Source, Account: sample.Account, Plan: sample.Plan,
 			LimitID: sample.LimitID, Dimension: sample.Dimension, WindowMins: sample.WindowMins,
 			UsedPercent: sample.UsedPercent, ResetCredits: sample.ResetCredits,
 		}
@@ -202,27 +221,13 @@ func (s *Store) RecordSamples(ctx context.Context, samples []Sample, force bool)
 	if err := s.prepare(ctx); err != nil {
 		return err
 	}
-	keep := "1"
-	if !force {
-		keep = fmt.Sprintf(`NOT EXISTS (
-  SELECT 1 FROM samples p
-  WHERE p.id = (SELECT s.id FROM samples s
-                WHERE s.account = n.account AND s.limit_id = n.limit_id AND s.dimension = n.dimension
-                ORDER BY s.ts DESC, s.id DESC LIMIT 1)
-    AND p.used_pct = n.used_pct AND p.window_mins IS n.window_mins
-    AND p.reset_credits IS n.reset_credits AND p.plan IS n.plan
-    AND n.ts - p.ts < %d)`, int64(Heartbeat/time.Second))
-	}
-	_, err = s.run(ctx, false, fmt.Sprintf(`INSERT INTO samples(ts, account, plan, limit_id, dimension, window_mins, used_pct, resets_at, reset_credits)
-SELECT * FROM (
-  SELECT json_extract(value, '$.ts') AS ts, json_extract(value, '$.account') AS account,
-         NULLIF(json_extract(value, '$.plan'), '') AS plan, json_extract(value, '$.limitId') AS limit_id,
-         json_extract(value, '$.dimension') AS dimension, json_extract(value, '$.windowMins') AS window_mins,
-         json_extract(value, '$.usedPercent') AS used_pct, json_extract(value, '$.resetsAt') AS resets_at,
-         json_extract(value, '$.resetCredits') AS reset_credits
-  FROM json_each(%s)) n
-WHERE %s;
-`, data, keep))
+	_, err = s.run(ctx, false, fmt.Sprintf(`INSERT INTO samples(ts, source, account, plan, limit_id, dimension, window_mins, used_pct, resets_at, reset_credits)
+SELECT json_extract(value, '$.ts'), NULLIF(json_extract(value, '$.source'), ''), json_extract(value, '$.account'),
+       NULLIF(json_extract(value, '$.plan'), ''), json_extract(value, '$.limitId'), json_extract(value, '$.dimension'),
+       json_extract(value, '$.windowMins'), json_extract(value, '$.usedPercent'), json_extract(value, '$.resetsAt'),
+       json_extract(value, '$.resetCredits')
+FROM json_each(%s);
+`, data))
 	return err
 }
 
@@ -259,7 +264,7 @@ func (s *Store) Prune(ctx context.Context, before time.Time) error {
 // Samples calls fn for each sample at or after since, oldest first. A missing
 // database has no samples; reading never creates one.
 func (s *Store) Samples(ctx context.Context, since time.Time, fn func(Sample) error) error {
-	return s.query(ctx, fmt.Sprintf(`SELECT json_object('ts', ts, 'account', account, 'plan', plan, 'limitId', limit_id,
+	return s.query(ctx, fmt.Sprintf(`SELECT json_object('ts', ts, 'source', source, 'account', account, 'plan', plan, 'limitId', limit_id,
   'dimension', dimension, 'windowMins', window_mins, 'usedPercent', used_pct, 'resetsAt', resets_at,
   'resetCredits', reset_credits)
 FROM samples WHERE ts >= %d ORDER BY ts, id;
@@ -269,7 +274,7 @@ FROM samples WHERE ts >= %d ORDER BY ts, id;
 			return fmt.Errorf("decode history sample: %w", err)
 		}
 		sample := Sample{
-			Time: time.Unix(row.TS, 0).UTC(), Account: row.Account, Plan: row.Plan, LimitID: row.LimitID,
+			Time: time.Unix(row.TS, 0).UTC(), Source: row.Source, Account: row.Account, Plan: row.Plan, LimitID: row.LimitID,
 			Dimension: row.Dimension, WindowMins: row.WindowMins, UsedPercent: row.UsedPercent,
 			RemainingPercent: 100 - row.UsedPercent, ResetCredits: row.ResetCredits,
 		}
@@ -333,10 +338,17 @@ func (s *Store) prepare(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for ; version < schemaVersion; version++ {
-		if _, err := s.run(ctx, false, migrations[version]); err != nil {
+	for version < schemaVersion {
+		_, err := s.run(ctx, false, migrationScript(version))
+		// Another process may have won the race to apply this migration.
+		current, versionErr := s.version(ctx)
+		if versionErr != nil {
+			return versionErr
+		}
+		if err != nil && current <= version {
 			return err
 		}
+		version = current
 	}
 	s.ready = true
 	return nil
@@ -353,8 +365,8 @@ func (s *Store) regular() error {
 	return nil
 }
 
-// version refuses a database written by a newer ccodex, whose schema this
-// build could misread or damage.
+// version refuses a database from a later era, whose schema this build could
+// misread or damage.
 func (s *Store) version(ctx context.Context) (int, error) {
 	output, err := s.run(ctx, true, "PRAGMA user_version;\n")
 	if err != nil {
@@ -364,8 +376,8 @@ func (s *Store) version(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("read history schema version: %w", err)
 	}
-	if version > schemaVersion {
-		return 0, fmt.Errorf("history database has schema version %d, but this ccodex supports up to %d; upgrade ccodex", version, schemaVersion)
+	if version/schemaEra > schemaVersion/schemaEra {
+		return 0, fmt.Errorf("history database has schema version %d, which this ccodex (schema %d) cannot use; upgrade ccodex", version, schemaVersion)
 	}
 	return version, nil
 }

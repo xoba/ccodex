@@ -15,7 +15,7 @@ import (
 
 type historyStore interface {
 	Path() string
-	RecordSamples(context.Context, []history.Sample, bool) error
+	RecordSamples(context.Context, []history.Sample) error
 	RecordResetEvent(context.Context, history.ResetEvent) error
 	Prune(context.Context, time.Time) error
 	Samples(context.Context, time.Time, func(history.Sample) error) error
@@ -36,7 +36,7 @@ func defaultHistory() (historyStore, error) {
 type unavailableHistory struct{ err error }
 
 func (h unavailableHistory) Path() string { return "" }
-func (h unavailableHistory) RecordSamples(context.Context, []history.Sample, bool) error {
+func (h unavailableHistory) RecordSamples(context.Context, []history.Sample) error {
 	return h.err
 }
 func (h unavailableHistory) RecordResetEvent(context.Context, history.ResetEvent) error {
@@ -64,9 +64,10 @@ type historyRecorder struct {
 	lastSkip  string
 }
 
-// samples saves a refresh. History is a convenience here, so a failure is
-// reported once and never interrupts monitoring.
-func (r *historyRecorder) samples(ctx context.Context, snapshot *codex.Snapshot, force bool) {
+// samples saves one check, naming the command that made it. History is a
+// convenience here, so a failure is reported once and never interrupts
+// monitoring.
+func (r *historyRecorder) samples(ctx context.Context, snapshot *codex.Snapshot, source string) {
 	if r == nil {
 		return
 	}
@@ -74,9 +75,12 @@ func (r *historyRecorder) samples(ctx context.Context, snapshot *codex.Snapshot,
 	if len(samples) == 0 {
 		return
 	}
+	for i := range samples {
+		samples[i].Source = source
+	}
 	writeCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
-	err := r.store.RecordSamples(writeCtx, samples, force)
+	err := r.store.RecordSamples(writeCtx, samples)
 	if err == nil && r.retention > 0 && time.Since(r.lastPrune) >= 24*time.Hour {
 		r.lastPrune = time.Now()
 		err = r.store.Prune(writeCtx, time.Now().Add(-r.retention))

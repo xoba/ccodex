@@ -52,8 +52,8 @@ ccodex watch --interval 30s          # Refresh every 30 seconds
 ccodex watch --alarm-threshold 10    # Alarm below 10% remaining
 ccodex watch --json                  # Stream snapshots as JSON lines
 ccodex reset --dry-run               # Inspect earned resets without using one
-ccodex history                       # When and why resets were requested
-ccodex history usage --csv           # Saved quota readings, ready to graph
+ccodex history                       # Every saved check and reset event
+ccodex history --checks --csv        # Every reading as CSV, ready to graph
 ccodex --help
 ```
 
@@ -70,14 +70,15 @@ stdout; refresh errors, reset outcomes, and alarms go to stderr.
 
 ## History
 
-`ccodex` saves each quota reading and every reset event in a local SQLite
+`ccodex` saves every successful check and every reset event in a local SQLite
 database, so you can see how usage moved over time and exactly when and why a
 reset was requested, including what watch saw when it made an automatic one.
 
 ```sh
-ccodex history                       # Reset requests, outcomes, and skips
-ccodex history usage --since 7d --csv > usage.csv
-sqlite3 "$(ccodex history path)"     # Or query it yourself
+ccodex history                       # Everything, oldest first
+ccodex history --since 24h --resets  # Narrow by time or kind
+ccodex history --checks --csv > usage.csv
+sqlite3 "$(ccodex history --path)"   # Or query it yourself
 ```
 
 The database stays on your machine, stores your account only as a short hash,

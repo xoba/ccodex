@@ -267,6 +267,28 @@ func TestNewerSchemaIsUsedUnlessItsEraChanged(t *testing.T) {
 	}
 }
 
+func TestOlderDatabaseCanBeReadBeforeAnythingIsWritten(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	if err := os.MkdirAll(filepath.Dir(store.Path()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// What the first history release saved: no source column yet.
+	if _, err := store.run(ctx, false, migrationScript(0)+`INSERT INTO samples(ts, account, limit_id, dimension, used_pct) VALUES (1800000000, 'abc123', 'codex', 'primary', 79);
+INSERT INTO reset_events(ts, key, event, mode) VALUES (1800000001, 'k', 'requested', 'manual');
+`); err != nil {
+		t.Fatal(err)
+	}
+	reader := New(store.Path())
+	samples, events := readSamples(t, reader), readEvents(t, reader)
+	if len(samples) != 1 || samples[0].UsedPercent != 79 || samples[0].Source != "" || len(events) != 1 || events[0].Key != "k" {
+		t.Fatalf("samples=%+v events=%+v", samples, events)
+	}
+	if output, err := store.run(ctx, true, "PRAGMA user_version;\n"); err != nil || strings.TrimSpace(string(output)) != fmt.Sprint(schemaVersion) {
+		t.Fatalf("schema version after reading: %q err=%v", output, err)
+	}
+}
+
 func TestOlderDatabaseIsUpgradedOnceByRacingProcesses(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()

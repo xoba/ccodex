@@ -258,7 +258,8 @@ func (s *Store) Prune(ctx context.Context, before time.Time) error {
 }
 
 // Samples calls fn for each sample at or after since, oldest first. A missing
-// database has no samples; reading never creates one.
+// database has no samples; reading never creates one, but it does upgrade one
+// saved by an older ccodex.
 func (s *Store) Samples(ctx context.Context, since time.Time, fn func(Sample) error) error {
 	return s.query(ctx, fmt.Sprintf(`SELECT json_object('ts', ts, 'source', source, 'account', account, 'plan', plan, 'limitId', limit_id,
   'dimension', dimension, 'windowMins', window_mins, 'usedPercent', used_pct, 'resetsAt', resets_at,
@@ -334,6 +335,15 @@ func (s *Store) prepare(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := s.migrate(ctx, version); err != nil {
+		return err
+	}
+	s.ready = true
+	return nil
+}
+
+// migrate brings a database at version up to schemaVersion.
+func (s *Store) migrate(ctx context.Context, version int) error {
 	for version < schemaVersion {
 		_, err := s.run(ctx, false, migrationScript(version))
 		// Another process may have won the race to apply this migration.
@@ -346,7 +356,6 @@ func (s *Store) prepare(ctx context.Context) error {
 		}
 		version = current
 	}
-	s.ready = true
 	return nil
 }
 
@@ -387,6 +396,11 @@ func (s *Store) query(ctx context.Context, script string, row func([]byte) error
 	}
 	version, err := s.version(ctx)
 	if err != nil || version == 0 {
+		return err
+	}
+	// Queries are written for the current schema, and a history saved by an
+	// older ccodex may be read before anything new is written to it.
+	if err := s.migrate(ctx, version); err != nil {
 		return err
 	}
 	output, err := s.run(ctx, true, script)

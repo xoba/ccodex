@@ -66,6 +66,36 @@ Replace `RUN_ID` with the appropriate run ID. Runner labels are documented in
 The workflow pins official checkout and setup-go actions to commit SHAs; update
 both the SHA and its version comment when upgrading either action.
 
+### If the history schema changed
+
+Users keep their history across upgrades because `ccodex` upgrades the database
+in place. The database's `PRAGMA user_version` records its schema version, and
+`migrations` in `internal/history/store.go` holds one step per version. Any
+command that reads or writes the history first applies the steps the database
+is missing, each inside a transaction guarded against a second process applying
+it at the same time.
+
+To change the schema:
+
+- Append one step to `migrations` and raise `schemaVersion`. **Never edit a step
+  that has been released**; databases in the field have already applied it.
+- Make only additive changes: a new nullable column, table, index, or view.
+  An older `ccodex`, such as a `watch` left running across `brew upgrade`, keeps
+  writing to the upgraded database, and it fails closed for automatic resets if
+  it cannot. Renaming, dropping, or changing the meaning of a column breaks it.
+- Keep each step valid inside a transaction, and keep it fast: it runs while a
+  user waits for `ccodex status`.
+- Add a test that builds the previous schema with rows in it, opens it with the
+  new code, and checks that the rows are still there. Read **before** writing in
+  that test, as users do. `TestOlderDatabaseCanBeReadBeforeAnythingIsWritten`
+  and `TestOlderDatabaseIsUpgradedOnceByRacingProcesses` are the templates.
+- Try the new build on a copy of a real database from the previous release.
+
+Older builds already refuse a database whose version is 1000 or more above
+theirs (`schemaEra`), which is how an incompatible change would have to be
+marked. No step that crosses an era exists yet, so producing one needs new code
+and tests, not only a new entry.
+
 ## 2. Tag and publish the release
 
 ```sh

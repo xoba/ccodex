@@ -322,8 +322,15 @@ Table `samples` has one row per quota window of each check, and `reset_events`
 one row per event, with `mode` `auto` for watch and `manual` for `ccodex reset`.
 Times are Unix seconds. The `resets` view has one row per request key: when it
 was first requested, why, and its latest known outcome. Treat the database as
-read-only; new versions add columns rather than changing existing ones, so a
-`watch` left running across an upgrade keeps recording.
+read-only.
+
+**Upgrading `ccodex` keeps your history.** When a new version changes the
+schema, it upgrades the database in place, inside one transaction, the first
+time it reads or writes it; your existing rows stay. New versions add columns
+rather than changing existing ones, so a `watch` left running across an upgrade
+keeps recording. If a future version ever had to make an incompatible change,
+older versions would refuse to write to the upgraded database rather than
+damage it.
 
 ### Requirements
 

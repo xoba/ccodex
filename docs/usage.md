@@ -18,7 +18,7 @@ ccodex watch --interval 30s              # Wait 30 seconds between refreshes
 ccodex watch --json                      # Stream snapshots as JSON lines
 ccodex watch --auto-reset                # Explicitly enable automatic resets
 ccodex watch --no-alarm                  # Silent, read-only monitoring
-ccodex watch --alarm-threshold 10        # Alarm below 10% remaining
+ccodex watch --alarm-threshold 10        # Alarm at or below 10% remaining
 ccodex reset --dry-run                   # Inspect resets without consuming one
 ccodex history                           # Every saved check and reset event
 ccodex history --checks --csv            # Every reading as CSV, for graphing
@@ -30,13 +30,14 @@ terminal; JSON mode writes one object per line. Failed refreshes are reported on
 stderr and retried. Press Ctrl-C to stop.
 
 `watch` sounds at most once per successful refresh when any reported quota window
-or individual spend limit has remaining quota **strictly below the alarm
+or individual spend limit has remaining quota **at or below the alarm
 threshold**, repeating while the quota stays low. Set `--alarm-threshold PERCENT`
-to a finite number from `0` through `100`, including decimals; the default is `5`.
-Values exactly at the threshold, unknown values, and failed refreshes do not
-trigger an alarm. A threshold of `0` disables alarms and new automatic reset
-attempts. `--no-alarm` mutes watch sound but **does not disable automatic resets if
-explicitly enabled with `--auto-reset`**.
+to a finite number from `0` through `100`, including decimals; the default is `2`.
+Unknown values and failed refreshes do not trigger an alarm. A threshold of `0`
+disables alarms and new automatic reset attempts. Automatic resets use the same
+threshold and the same rule, so a reading that sounds the alarm is also one that
+may spend a reset. `--no-alarm` mutes watch sound but **does not disable
+automatic resets if explicitly enabled with `--auto-reset`**.
 `status` and `reset` never sound.
 macOS plays the built-in Sosumi sound; other platforms use a terminal bell, whose
 audibility depends on terminal settings. Sound errors produce a warning without
@@ -56,7 +57,7 @@ ccodex watch --auto-reset
 ccodex watch --auto-reset --max-resets-per-day 2
 ```
 
-With automatic resets enabled, on a fresh successful poll below the alarm
+With automatic resets enabled, on a fresh successful poll at or below the alarm
 threshold, watch sounds once unless muted, then starts a single reset attempt
 for that continuous low-quota period if the reported available reset count is
 greater than zero and the daily cap permits it. Codex decides which quota windows
@@ -248,8 +249,8 @@ ccodex history --path                # Where the database lives
 
 ```text
 TIME                 SOURCE      ACCOUNT       EVENT            DETAIL
-2026-09-17 14:02:12  watch       6fd0ab8ee8d2  check            codex 5h 3.5%, 7d 59% left; earned resets: 2
-2026-09-17 14:03:12  watch       6fd0ab8ee8d2  reset requested  codex primary 3.5% left; threshold 5%; earned resets: 2 (request …333344445555)
+2026-09-17 14:02:12  watch       6fd0ab8ee8d2  check            codex 5h 1.5%, 7d 59% left; earned resets: 2
+2026-09-17 14:03:12  watch       6fd0ab8ee8d2  reset requested  codex primary 1.5% left; threshold 2%; earned resets: 2 (request …333344445555)
 2026-09-17 14:03:14  watch                     reset outcome    reset (request …333344445555)
 2026-09-17 14:03:14  auto-reset  6fd0ab8ee8d2  check            codex 5h 100%, 7d 59% left; earned resets: 1
 ```
@@ -283,7 +284,7 @@ Reset events are never deleted or changed:
 
 | Event | Meaning |
 | --- | --- |
-| `requested` | A reset request is about to be sent. `reason` holds the trigger: for watch, the threshold, each quota window below it with its remaining percentage, the earned resets available, the daily cap, and whether this retries an earlier request; for `ccodex reset`, `manual` and any `--credit-id`. |
+| `requested` | A reset request is about to be sent. `reason` holds the trigger: for watch, the threshold, each quota window at or below it with its remaining percentage, the earned resets available, the daily cap, and whether this retries an earlier request; for `ccodex reset`, `manual` and any `--credit-id`. |
 | `outcome` | Codex answered; `outcome` is one of the [reset outcomes](#redeem-an-earned-reset). |
 | `error` | The request failed or was interrupted, so its outcome is unknown; `detail` holds the error. |
 | `skipped` | Quota was low but watch requested nothing; `detail` says why: `dailyLimitReached`, `noResetAvailable`, `alreadyResetThisPeriod`, `quotaRecovered`, `quotaUnconfirmed`, `accountChanged`, `noAccountID`, or `budgetUnavailable`. Saved once per low-quota period and reason, not on every poll. |

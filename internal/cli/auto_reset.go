@@ -1,10 +1,6 @@
 package cli
 
-import (
-	"math"
-
-	"github.com/xoba/ccodex/internal/codex"
-)
+import "github.com/xoba/ccodex/internal/codex"
 
 type autoResetOutcome uint8
 
@@ -64,7 +60,7 @@ func (s *autoResetState) resume(snapshot *codex.Snapshot, threshold float64, par
 	s.triggers = nil
 	for id, bucket := range quotaBuckets(snapshot.RateLimits) {
 		for kind := uint8(0); kind < 3; kind++ {
-			if remaining, known := quotaDimensionRemaining(bucket, kind); known && remaining < threshold {
+			if remaining, known := quotaDimensionRemaining(bucket, kind); known && quotaLow(remaining, threshold) {
 				s.triggers = append(s.triggers, quotaDimension{bucket: id, kind: kind})
 			}
 		}
@@ -98,7 +94,7 @@ func (s *autoResetState) recovered(snapshot *codex.Snapshot, threshold float64) 
 			return false
 		}
 		remaining, known := quotaDimensionRemaining(bucket, trigger.kind)
-		if !known || remaining < threshold {
+		if !known || quotaLow(remaining, threshold) {
 			return false
 		}
 	}
@@ -109,21 +105,4 @@ func hasResetCredit(snapshot *codex.Snapshot) bool {
 	return snapshot != nil && snapshot.RateLimits != nil &&
 		snapshot.RateLimits.RateLimitResetCredits != nil &&
 		snapshot.RateLimits.RateLimitResetCredits.AvailableCount > 0
-}
-
-func quotaDimensionRemaining(bucket codex.RateLimitSnapshot, kind uint8) (float64, bool) {
-	if kind == 2 {
-		if bucket.IndividualLimit == nil {
-			return 0, false
-		}
-		return math.Max(0, math.Min(100, float64(bucket.IndividualLimit.RemainingPercent))), true
-	}
-	window := bucket.Primary
-	if kind == 1 {
-		window = bucket.Secondary
-	}
-	if window == nil || window.UsedPercent == nil || math.IsNaN(*window.UsedPercent) || math.IsInf(*window.UsedPercent, 0) {
-		return 0, false
-	}
-	return math.Max(0, math.Min(100, 100-*window.UsedPercent)), true
 }

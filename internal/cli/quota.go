@@ -25,23 +25,42 @@ func quotaBuckets(limits *codex.RateLimitsResponse) map[string]codex.RateLimitSn
 	return map[string]codex.RateLimitSnapshot{id: *limits.RateLimits}
 }
 
+// quotaLow is the one rule behind alarms and automatic resets, so both act
+// on the same reading: remaining quota at or below the threshold. A zero
+// threshold disables both.
+func quotaLow(remaining, threshold float64) bool {
+	return threshold > 0 && remaining <= threshold
+}
+
 func hasLowQuota(snapshot *codex.Snapshot, threshold float64) bool {
 	if snapshot == nil {
 		return false
 	}
 	for _, bucket := range quotaBuckets(snapshot.RateLimits) {
-		for _, window := range []*codex.RateLimitWindow{bucket.Primary, bucket.Secondary} {
-			if window == nil || window.UsedPercent == nil {
-				continue
-			}
-			used := *window.UsedPercent
-			if !math.IsNaN(used) && !math.IsInf(used, 0) && math.Max(0, math.Min(100, 100-used)) < threshold {
+		for kind := uint8(0); kind < 3; kind++ {
+			if remaining, known := quotaDimensionRemaining(bucket, kind); known && quotaLow(remaining, threshold) {
 				return true
 			}
 		}
-		if bucket.IndividualLimit != nil && math.Max(0, math.Min(100, float64(bucket.IndividualLimit.RemainingPercent))) < threshold {
-			return true
-		}
 	}
 	return false
+}
+
+// quotaDimensionRemaining reports a dimension's remaining percentage, clamped
+// to 0–100, or false when the server did not supply a usable value.
+func quotaDimensionRemaining(bucket codex.RateLimitSnapshot, kind uint8) (float64, bool) {
+	if kind == 2 {
+		if bucket.IndividualLimit == nil {
+			return 0, false
+		}
+		return math.Max(0, math.Min(100, float64(bucket.IndividualLimit.RemainingPercent))), true
+	}
+	window := bucket.Primary
+	if kind == 1 {
+		window = bucket.Secondary
+	}
+	if window == nil || window.UsedPercent == nil || math.IsNaN(*window.UsedPercent) || math.IsInf(*window.UsedPercent, 0) {
+		return 0, false
+	}
+	return math.Max(0, math.Min(100, 100-*window.UsedPercent)), true
 }

@@ -469,7 +469,7 @@ func TestUnavailableHistoryPausesAutomaticResetsOnly(t *testing.T) {
 		if reads++; reads == 5 {
 			cancel()
 		}
-		return autoSnapshot(97, 2), nil
+		return autoSnapshot(99, 2), nil
 	}, func(context.Context, codex.Options, codex.ResetParams) (*codex.ResetResult, error) {
 		t.Fatal("unrecorded automatic reset was sent")
 		return nil, nil
@@ -502,7 +502,7 @@ func TestWatchSavesEveryCheckWithItsSource(t *testing.T) {
 			cancel()
 		}
 		if reads == 3 || reads == 4 {
-			return autoSnapshot(97, 1), nil
+			return autoSnapshot(99, 1), nil
 		}
 		return autoSnapshot(40, 1), nil
 	}, func(_ context.Context, _ codex.Options, params codex.ResetParams) (*codex.ResetResult, error) {
@@ -522,7 +522,7 @@ func TestWatchSavesEveryCheckWithItsSource(t *testing.T) {
 	}
 	// The unchanged second reading is kept too, as are the confirming read
 	// before the reset and the reading after it.
-	if want := []string{"watch 40", "watch 40", "watch 97", "confirm 97", "auto-reset 0"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"watch 40", "watch 40", "watch 99", "confirm 99", "auto-reset 0"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("saved checks: %q", got)
 	}
 }

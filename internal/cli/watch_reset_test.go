@@ -48,13 +48,14 @@ func TestWatchAutoResetOptInRecoversAndRearms(t *testing.T) {
 	reads, sounds := 0, 0
 	var keys []string
 	cmd := newWatchResetTestCommand(t, func(context.Context, codex.Options) (*codex.Snapshot, error) {
-		// Reads 1 and 4 are low polls, each confirmed by the next read before
-		// its reset is sent; read 3 is the healthy poll that rearms watch.
+		// Reads 1 and 4 are low polls at exactly the default threshold, each
+		// confirmed by the next read before its reset is sent; read 3 is the
+		// healthy poll that rearms watch.
 		reads++
 		if reads == 3 {
 			return autoSnapshot(0, 1), nil
 		}
-		return autoSnapshot(97, 2), nil
+		return autoSnapshot(98, 2), nil
 	}, func(ctx context.Context, opts codex.Options, params codex.ResetParams) (*codex.ResetResult, error) {
 		if !strings.Contains(stderr.String(), params.IdempotencyKey) {
 			t.Fatal("automatic reset key was not recorded before request")
@@ -88,7 +89,7 @@ func TestWatchAutoResetOptInRecoversAndRearms(t *testing.T) {
 		if err := json.Unmarshal([]byte(line), &snapshot); err != nil {
 			t.Fatalf("non-snapshot JSON output: %s", line)
 		}
-		if (i == 1 || i == 4) && hasLowQuota(&snapshot, 5) {
+		if (i == 1 || i == 4) && hasLowQuota(&snapshot, 2) {
 			t.Fatal("post-reset JSON did not show the refreshed quota")
 		}
 	}
@@ -481,5 +482,51 @@ func TestAutoResetAccountChangeCannotReuseAnotherAccountsKey(t *testing.T) {
 	}
 	if calls != 1 || !strings.Contains(stderr.String(), "account changed") || !strings.Contains(stderr.String(), "daily limit of 1 reached") {
 		t.Fatalf("account-scoped key bypassed cap: calls=%d stderr=%s", calls, stderr.String())
+	}
+}
+
+func TestWatchAlarmAndAutoResetShareTheThreshold(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		used       float64
+		args       []string
+		wantEvents int
+	}{
+		{"at default threshold", 98, nil, 1},
+		{"just above default threshold", 97.99, nil, 0},
+		{"at custom threshold", 90, []string{"--alarm-threshold", "10"}, 1},
+		{"just above custom threshold", 89.99, []string{"--alarm-threshold", "10"}, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			reads, sounds, resets := 0, 0, 0
+			cmd := newWatchResetTestCommand(t, func(context.Context, codex.Options) (*codex.Snapshot, error) {
+				reads++
+				if reads == 3 {
+					cancel()
+				}
+				return autoSnapshot(test.used, 1), nil
+			}, func(ctx context.Context, opts codex.Options, params codex.ResetParams) (*codex.ResetResult, error) {
+				resets++
+				return recoveredReset(params, 0), nil
+			}, func(context.Context, io.Writer) error {
+				sounds++
+				return nil
+			})
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			cmd.SetArgs(append([]string{"watch", "--auto-reset", "--interval", "1s"}, test.args...))
+			bounded, stop := context.WithTimeout(ctx, 5*time.Second)
+			defer stop()
+			if err := cmd.ExecuteContext(bounded); !errors.Is(err, context.Canceled) {
+				t.Fatalf("watch failed: %v", err)
+			}
+			// A low first poll is confirmed by the second read, then the reset
+			// spends the only credit; a healthy poll neither sounds nor resets.
+			if sounds != test.wantEvents || resets != test.wantEvents {
+				t.Fatalf("sounds=%d resets=%d, want both %d", sounds, resets, test.wantEvents)
+			}
+		})
 	}
 }

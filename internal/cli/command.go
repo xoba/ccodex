@@ -131,7 +131,7 @@ func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cr
 	watch := &cobra.Command{
 		Use:   "watch",
 		Short: "Refresh continuously until interrupted",
-		Long:  "Fetch immediately, then wait the interval after each refresh.\nMonitoring is read-only by default. Below --alarm-threshold percent remaining,\nsound once per refresh. Use --auto-reset to automatically spend an available\nearned reset, subject to --max-resets-per-day (default 1).\nSuccessful snapshots go to stdout; failures and reset outcomes go to stderr.\nEvery check and reset event is saved for ccodex history.\nPress Ctrl-C to stop.",
+		Long:  "Fetch immediately, then wait the interval after each refresh.\nMonitoring is read-only by default. At or below --alarm-threshold percent\nremaining, sound once per refresh. Use --auto-reset to automatically spend an\navailable earned reset at the same threshold, subject to --max-resets-per-day\n(default 1).\nSuccessful snapshots go to stdout; failures and reset outcomes go to stderr.\nEvery check and reset event is saved for ccodex history.\nPress Ctrl-C to stop.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validate(); err != nil {
@@ -234,9 +234,9 @@ func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cr
 		},
 	}
 	watch.Flags().DurationVar(&interval, "interval", time.Minute, "Delay between refreshes (minimum 1s)")
-	watch.Flags().Float64Var(&alarmThreshold, "alarm-threshold", 5, "Alarm below this remaining quota percentage; also applies to --auto-reset (0–100; 0 disables both)")
+	watch.Flags().Float64Var(&alarmThreshold, "alarm-threshold", 2, "Alarm at or below this remaining quota percentage; --auto-reset uses the same threshold (0–100; 0 disables both)")
 	watch.Flags().BoolVar(&noAlarm, "no-alarm", false, "Disable low-quota alarm sounds")
-	watch.Flags().BoolVar(&autoReset, "auto-reset", false, "Opt in to automatically spending an available earned reset below the alarm threshold")
+	watch.Flags().BoolVar(&autoReset, "auto-reset", false, "Opt in to automatically spending an available earned reset at or below the alarm threshold")
 	watch.Flags().IntVar(&maxResetsPerDay, "max-resets-per-day", 1, "Maximum automatic resets per local calendar day, shared across watch restarts (0 disables)")
 	watch.Flags().IntVar(&historyDays, "history-days", 90, "Delete saved checks older than this many days (0 keeps them forever; reset events are always kept)")
 	root.AddCommand(watch)

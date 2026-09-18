@@ -30,7 +30,8 @@ func TestAutoResetStartsOnlyBelowThresholdWithKnownCredit(t *testing.T) {
 		{"zero credits", autoResetSnapshot(100, 0), 5, false},
 		{"negative credits", autoResetSnapshot(100, -1), 5, false},
 		{"healthy", autoResetSnapshot(20, 2), 5, false},
-		{"exact threshold", autoResetSnapshot(95, 2), 5, false},
+		{"exact threshold", autoResetSnapshot(95, 2), 5, true},
+		{"just above threshold", autoResetSnapshot(94.99, 2), 5, false},
 		{"low", autoResetSnapshot(95.01, 2), 5, true},
 		{"custom threshold", autoResetSnapshot(93, 2), 10, true},
 		{"zero threshold", autoResetSnapshot(100, 2), 0, false},
@@ -56,9 +57,9 @@ func TestAutoResetConsumesOneRequestUntilVerifiedRecovery(t *testing.T) {
 			if !attempt {
 				t.Fatal("expected first reset")
 			}
-			healthy := autoResetSnapshot(95, 1)
+			healthy := autoResetSnapshot(94, 1)
 			healthy.RateLimits.RateLimits.Secondary = quotaWindow(80)
-			healthy.RateLimits.RateLimits.IndividualLimit = &codex.SpendControlLimitSnapshot{RemainingPercent: 5}
+			healthy.RateLimits.RateLimits.IndividualLimit = &codex.SpendControlLimitSnapshot{RemainingPercent: 6}
 			// The follow-up read is already healthy, but only an ordinary
 			// watch fetch may confirm recovery and permit another request.
 			state.record(&codex.ResetResult{Outcome: outcome, RateLimits: healthy.RateLimits}, nil)
@@ -213,7 +214,7 @@ func TestAutoResetNoOpRetriesSameKeyWhileEligible(t *testing.T) {
 				t.Fatalf("no-op did not retry the same request: first=%+v retry=%+v attempt=%v", first, retry, attempt)
 			}
 			state.record(&codex.ResetResult{Outcome: outcome}, nil)
-			if _, attempt := state.next(autoResetSnapshot(95, 1), 5); attempt {
+			if _, attempt := state.next(autoResetSnapshot(94, 1), 5); attempt {
 				t.Fatal("healthy quota should not trigger a reset")
 			}
 			second, attempt := state.next(low, 5)

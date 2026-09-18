@@ -25,16 +25,17 @@ func TestLowQuotaThresholdAndMissingValues(t *testing.T) {
 		{"no limits", &codex.Snapshot{}, false},
 		{"unknown windows", quotaSnapshot(codex.RateLimitSnapshot{}), false},
 		{"unknown percentage", quotaSnapshot(codex.RateLimitSnapshot{Primary: &codex.RateLimitWindow{}}), false},
-		{"exactly five percent", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(95)}), false},
+		{"exactly five percent", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(95)}), true},
 		{"just below five percent", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(95.01)}), true},
-		{"above five percent", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(94.99)}), false},
+		{"just above five percent", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(94.99)}), false},
 		{"exhausted", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(100)}), true},
 		{"over quota", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(101)}), true},
 		{"secondary low", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(0), Secondary: quotaWindow(96)}), true},
 		{"not a number", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(math.NaN())}), false},
 		{"infinity", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(math.Inf(1))}), false},
 		{"spend limit low", quotaSnapshot(codex.RateLimitSnapshot{IndividualLimit: &codex.SpendControlLimitSnapshot{RemainingPercent: 4}}), true},
-		{"spend limit exactly five", quotaSnapshot(codex.RateLimitSnapshot{IndividualLimit: &codex.SpendControlLimitSnapshot{RemainingPercent: 5}}), false},
+		{"spend limit exactly five", quotaSnapshot(codex.RateLimitSnapshot{IndividualLimit: &codex.SpendControlLimitSnapshot{RemainingPercent: 5}}), true},
+		{"spend limit just above five", quotaSnapshot(codex.RateLimitSnapshot{IndividualLimit: &codex.SpendControlLimitSnapshot{RemainingPercent: 6}}), false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := hasLowQuota(test.snapshot, 5); got != test.want {
@@ -48,7 +49,7 @@ func TestLowQuotaUsesEveryAuthoritativeBucket(t *testing.T) {
 	snapshot := quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(100)})
 	snapshot.RateLimits.RateLimitsByLimitID = map[string]codex.RateLimitSnapshot{
 		"codex": {Primary: quotaWindow(25)},
-		"other": {Secondary: quotaWindow(95)},
+		"other": {Secondary: quotaWindow(94)},
 	}
 	if hasLowQuota(snapshot, 5) {
 		t.Fatal("legacy mirror should not override the multi-bucket view")
@@ -67,10 +68,10 @@ func TestCustomQuotaThreshold(t *testing.T) {
 		used, threshold float64
 		want            bool
 	}{
-		{93, 10, true}, {90, 10, false},
-		{97.51, 2.5, true}, {97.5, 2.5, false},
+		{93, 10, true}, {90, 10, true}, {89.99, 10, false},
+		{97.5, 2.5, true}, {97.49, 2.5, false},
 		{100, 0, false}, {101, 0, false},
-		{0, 100, false}, {1, 100, true},
+		{0, 100, true}, {1, 100, true},
 	} {
 		snapshot := quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(test.used)})
 		if got := hasLowQuota(snapshot, test.threshold); got != test.want {
@@ -78,7 +79,7 @@ func TestCustomQuotaThreshold(t *testing.T) {
 		}
 	}
 	snapshot := quotaSnapshot(codex.RateLimitSnapshot{IndividualLimit: &codex.SpendControlLimitSnapshot{RemainingPercent: 7}})
-	if !hasLowQuota(snapshot, 10) || hasLowQuota(snapshot, 7) {
+	if !hasLowQuota(snapshot, 10) || !hasLowQuota(snapshot, 7) || hasLowQuota(snapshot, 6.5) {
 		t.Fatal("individual spend limit did not use the custom threshold")
 	}
 }

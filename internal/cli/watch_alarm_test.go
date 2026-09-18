@@ -23,7 +23,7 @@ func TestWatchSoundsOnceEachLowIterationWithManyLowQuotas(t *testing.T) {
 		reads++
 		snapshot := quotaSnapshot(codex.RateLimitSnapshot{})
 		snapshot.RateLimits.RateLimitsByLimitID = map[string]codex.RateLimitSnapshot{
-			"codex": {Primary: quotaWindow(96), Secondary: quotaWindow(100)},
+			"codex": {Primary: quotaWindow(99), Secondary: quotaWindow(100)},
 			"other": {Primary: quotaWindow(98)},
 		}
 		return snapshot, nil
@@ -65,7 +65,7 @@ func TestWatchDoesNotSoundWhenMutedOrQuotaIsNotLow(t *testing.T) {
 		muted    bool
 	}{
 		{"muted", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(99)}), true},
-		{"exact threshold", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(95)}), false},
+		{"just above threshold", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(97.99)}), false},
 		{"unknown", quotaSnapshot(codex.RateLimitSnapshot{}), false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -104,7 +104,7 @@ func TestWatchContinuesAfterSoundFailureWithoutReplayingOnFetchFailure(t *testin
 		reads++
 		switch reads {
 		case 1:
-			return quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(96)}), nil
+			return quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(99)}), nil
 		case 2:
 			return nil, errors.New("fetch failed")
 		default:
@@ -153,7 +153,7 @@ func TestWatchCustomAlarmThreshold(t *testing.T) {
 	})
 	cmd.SetOut(io.Discard)
 	cmd.SetArgs([]string{"watch", "--alarm-threshold", "10"})
-	// Bound the test in case a regression keeps the default threshold of 5.
+	// Bound the test in case a regression keeps the default threshold of 2.
 	testCtx, stop := context.WithTimeout(ctx, 2*time.Second)
 	defer stop()
 	if err := cmd.ExecuteContext(testCtx); !errors.Is(err, context.Canceled) || sounds != 1 {

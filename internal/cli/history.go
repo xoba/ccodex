@@ -227,7 +227,7 @@ func lowQuotaReason(snapshot *codex.Snapshot, threshold float64, limit int, retr
 	buckets := quotaBuckets(snapshot.RateLimits)
 	for _, id := range sortedBucketIDs(buckets) {
 		for kind := uint8(0); kind < 3; kind++ {
-			if remaining, known := quotaDimensionRemaining(buckets[id], kind); known && remaining < threshold {
+			if remaining, known := quotaDimensionRemaining(buckets[id], kind); known && quotaLow(remaining, threshold) {
 				reason.Low = append(reason.Low, history.LowQuota{LimitID: id, Dimension: dimensionName(kind), RemainingPercent: remaining})
 			}
 		}

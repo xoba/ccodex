@@ -32,7 +32,8 @@ Codex is distributed as a Homebrew **cask**, while `ccodex` uses a source-build
 so the current package cannot install Codex automatically as a dependency.
 
 Watch refreshes every **60 seconds** and sounds an alarm when remaining quota is
-**below 5%**. It never consumes an earned reset unless you pass `--auto-reset`.
+**at or below 2%**. It never consumes an earned reset unless you pass `--auto-reset`,
+which acts at that same threshold.
 Press Ctrl-C to stop. For a single snapshot, run `ccodex`.
 
 You need a ChatGPT sign-in that provides Codex subscription limits. API key
@@ -49,7 +50,7 @@ ccodex play                          # Play the alarm once and exit
 ccodex watch                         # Read-only monitoring with alarms
 ccodex watch --no-alarm              # Silent, read-only monitoring
 ccodex watch --interval 30s          # Refresh every 30 seconds
-ccodex watch --alarm-threshold 10    # Alarm below 10% remaining
+ccodex watch --alarm-threshold 10    # Alarm at or below 10% remaining
 ccodex watch --json                  # Stream snapshots as JSON lines
 ccodex reset --dry-run               # Inspect earned resets without using one
 ccodex history                       # Every saved check and reset event
@@ -87,8 +88,8 @@ and survives upgrades. Pass `--no-history` to any command to skip it. See the
 
 ## Opt in to earned resets
 
-To let watch redeem an available earned reset when quota falls below the alarm
-threshold:
+To let watch redeem an available earned reset when quota falls to or below the
+alarm threshold, the same reading that sounds the alarm:
 
 ```sh
 ccodex watch --auto-reset
@@ -152,7 +153,7 @@ report general ChatGPT conversation limits or OpenAI API billing.
 - **Missing data or protocol errors:** update Codex and `ccodex`, then retry.
   Optional fields depend on what your account and Codex version return.
 - **No audible alarm:** run `ccodex play` to test your sound or terminal-bell
-  settings. Watch alarms require known remaining quota strictly below the threshold.
+  settings. Watch alarms require known remaining quota at or below the threshold.
 
 Report reproducible problems in [GitHub issues](https://github.com/xoba/ccodex/issues).
 Remove account details and other private data from any output you share.

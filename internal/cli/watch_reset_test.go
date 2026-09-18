@@ -187,12 +187,17 @@ func TestWatchReadOnlyKeepsAlarmWithoutOpeningResetBudget(t *testing.T) {
 				t.Fatal("read-only watch opened automatic reset accounting")
 				return nil, nil
 			})
+			var stderr bytes.Buffer
 			cmd.SetOut(io.Discard)
+			cmd.SetErr(&stderr)
 			cmd.SetArgs(test.args)
 			bounded, stop := context.WithTimeout(ctx, 3*time.Second)
 			defer stop()
 			if err := cmd.ExecuteContext(bounded); !errors.Is(err, context.Canceled) || reads != 2 || sounds != 1 {
 				t.Fatalf("unexpected monitoring behavior: reads=%d sounds=%d err=%v", reads, sounds, err)
+			}
+			if !strings.Contains(stderr.String(), "automatic resets are off, so nothing will be spent (add --auto-reset") {
+				t.Fatalf("read-only alarm did not explain itself: stderr=%q", stderr.String())
 			}
 		})
 	}

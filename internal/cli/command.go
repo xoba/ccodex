@@ -209,6 +209,13 @@ func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cr
 								return err
 							}
 						}
+						if !autoReset {
+							// Say why the alarm keeps sounding: nothing is spent
+							// without the explicit opt-in.
+							if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "ccodex: alarm: quota is at or below %g%% remaining; automatic resets are off, so nothing will be spent (add --auto-reset to redeem an available earned reset)\n", alarmThreshold); err != nil {
+								return err
+							}
+						}
 					}
 					if autoReset && reset != nil && budget != nil && maxResetsPerDay > 0 {
 						updated, err := applyAutoReset(cmd.Context(), &resetState, snapshot, alarmThreshold, opts, reset, budget, maxResetsPerDay, cmd.ErrOrStderr(), recorder, fetch)

@@ -36,8 +36,10 @@ to a finite number from `0` through `100`, including decimals; the default is `2
 Unknown values and failed refreshes do not trigger an alarm. A threshold of `0`
 disables alarms and new automatic reset attempts. Automatic resets use the same
 threshold and the same rule, so a reading that sounds the alarm is also one that
-may spend a reset. `--no-alarm` mutes watch sound but **does not disable
-automatic resets if explicitly enabled with `--auto-reset`**.
+may spend a reset. Without `--auto-reset`, each alarm is followed by a line on
+stderr saying that automatic resets are off and nothing will be spent, so a
+ringing watch always explains itself. `--no-alarm` mutes watch sound but **does
+not disable automatic resets if explicitly enabled with `--auto-reset`**.
 `status` and `reset` never sound.
 macOS plays the built-in Sosumi sound; other platforms use a terminal bell, whose
 audibility depends on terminal settings. Sound errors produce a warning without

@@ -44,7 +44,9 @@ func TestWatchSoundsOnceEachLowIterationWithManyLowQuotas(t *testing.T) {
 	if err := cmd.ExecuteContext(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected cancellation, got %v", err)
 	}
-	if reads != 2 || sounds != 2 || stderr.String() != "\a\a" {
+	// Each sound is followed by the reminder that nothing will be spent; the
+	// second sound cancels the watch before its reminder is written.
+	if reads != 2 || sounds != 2 || strings.Count(stderr.String(), "\a") != 2 || !strings.HasPrefix(stderr.String(), "\accodex: alarm: quota is at or below 2% remaining") {
 		t.Fatalf("reads=%d sounds=%d stderr=%q", reads, sounds, stderr.String())
 	}
 	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
@@ -171,6 +173,53 @@ func TestWatchRejectsInvalidAlarmThreshold(t *testing.T) {
 			cmd.SetArgs([]string{"watch", "--alarm-threshold=" + value})
 			if err := cmd.Execute(); err == nil {
 				t.Fatal("expected threshold validation error")
+			}
+		})
+	}
+}
+
+func TestWatchAlarmRemindsThatAutoResetIsOff(t *testing.T) {
+	reminder := "ccodex: alarm: quota is at or below 10% remaining; automatic resets are off, so nothing will be spent (add --auto-reset to redeem an available earned reset)\n"
+	for _, test := range []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"monitoring only", nil, 2},
+		{"auto-reset enabled", []string{"--auto-reset"}, 0},
+		{"muted", []string{"--no-alarm"}, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var stderr bytes.Buffer
+			reads := 0
+			cmd := newWatchResetTestCommand(t, func(context.Context, codex.Options) (*codex.Snapshot, error) {
+				if reads++; reads == 3 {
+					cancel()
+				}
+				// 7% remaining with no reset available: low, but nothing to spend.
+				return autoSnapshot(93, 0), nil
+			}, func(context.Context, codex.Options, codex.ResetParams) (*codex.ResetResult, error) {
+				t.Fatal("no reset was available")
+				return nil, nil
+			}, func(_ context.Context, w io.Writer) error {
+				fmt.Fprint(w, "\a")
+				return nil
+			})
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(&stderr)
+			cmd.SetArgs(append([]string{"watch", "--interval", "1s", "--alarm-threshold", "10"}, test.args...))
+			bounded, stop := context.WithTimeout(ctx, 5*time.Second)
+			defer stop()
+			if err := cmd.ExecuteContext(bounded); !errors.Is(err, context.Canceled) {
+				t.Fatal(err)
+			}
+			if got := strings.Count(stderr.String(), reminder); got != test.want {
+				t.Fatalf("reminders=%d, want %d: stderr=%q", got, test.want, stderr.String())
+			}
+			if test.want > 0 && !strings.HasPrefix(stderr.String(), "\a"+reminder) {
+				t.Fatalf("reminder should follow the sound: stderr=%q", stderr.String())
 			}
 		})
 	}

@@ -87,6 +87,33 @@ func TestLegacyAndMissingOptionalData(t *testing.T) {
 	}
 }
 
+func TestSpendControlThresholdComesFromCodex(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		reached bool
+		limit   *codex.SpendControlLimitSnapshot
+		want    string
+	}{
+		{"not reported", false, nil, "Spend control: not reached; threshold: unavailable (not provided by Codex)"},
+		{"reported", true, &codex.SpendControlLimitSnapshot{Limit: "150", Used: "150"}, "Spend control: reached; threshold: 150"},
+		{"empty limit", false, &codex.SpendControlLimitSnapshot{}, "Spend control: not reached; threshold: unavailable (not provided by Codex)"},
+		{"terminal controls", false, &codex.SpendControlLimitSnapshot{Limit: "150\n\x1b[2J"}, "Spend control: not reached; threshold: 150  [2J"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := quotaSnapshot(codex.RateLimitSnapshot{SpendControlReached: &test.reached, IndividualLimit: test.limit})
+			var out bytes.Buffer
+			// The local watch threshold must not be mistaken for the account's
+			// spend threshold, even when Codex supplies no individual limit.
+			if err := renderSnapshot(&out, snapshot, true, &watchSettings{threshold: 2}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.String(), test.want+"\n") || strings.Contains(out.String(), "\x1b") {
+				t.Fatalf("missing or unsafe spend threshold: %s", out.String())
+			}
+		})
+	}
+}
+
 func TestResetCountdown(t *testing.T) {
 	now := time.Date(2026, 9, 15, 12, 0, 0, 500000000, time.UTC)
 	for _, test := range []struct {

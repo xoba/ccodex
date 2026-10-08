@@ -72,15 +72,15 @@ func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cr
 		}
 		return &historyRecorder{store: store, output: cmd.ErrOrStderr(), timeout: opts.Timeout, retention: retention}
 	}
-	writeSnapshot := func(cmd *cobra.Command, snapshot *codex.Snapshot, watching bool) error {
+	writeSnapshot := func(cmd *cobra.Command, snapshot *codex.Snapshot, watch *watchSettings) error {
 		if jsonOutput {
 			enc := json.NewEncoder(cmd.OutOrStdout())
-			if !watching {
+			if watch == nil {
 				enc.SetIndent("", "  ")
 			}
 			return enc.Encode(snapshot)
 		}
-		return renderText(cmd.OutOrStdout(), snapshot)
+		return renderSnapshot(cmd.OutOrStdout(), snapshot, true, watch)
 	}
 	status := func(cmd *cobra.Command, _ []string) error {
 		if err := validate(); err != nil {
@@ -90,7 +90,7 @@ func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cr
 		if err != nil {
 			return err
 		}
-		if err := writeSnapshot(cmd, snapshot, false); err != nil {
+		if err := writeSnapshot(cmd, snapshot, nil); err != nil {
 			return err
 		}
 		newRecorder(cmd, 0).samples(cmd.Context(), snapshot, "status")
@@ -177,6 +177,10 @@ func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cr
 					}
 				}
 			}
+			settings := &watchSettings{
+				threshold: alarmThreshold, noAlarm: noAlarm, autoReset: autoReset,
+				maxResetsPerDay: maxResetsPerDay, autoResetUnavailable: budget == nil,
+			}
 			for {
 				if err := cmd.Context().Err(); err != nil {
 					return err
@@ -190,7 +194,7 @@ func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cr
 						return writeErr
 					}
 				} else {
-					if err := writeSnapshot(cmd, snapshot, true); err != nil {
+					if err := writeSnapshot(cmd, snapshot, settings); err != nil {
 						return err
 					}
 					if err := cmd.Context().Err(); err != nil {
@@ -224,7 +228,7 @@ func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cr
 						}
 						if updated != nil {
 							recorder.samples(cmd.Context(), updated, "auto-reset")
-							if err := writeSnapshot(cmd, updated, true); err != nil {
+							if err := writeSnapshot(cmd, updated, settings); err != nil {
 								return err
 							}
 						}

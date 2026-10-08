@@ -63,7 +63,10 @@ and remaining, reset times and countdowns, earned resets, and available token
 activity. Missing optional information is shown as unavailable. Window lengths
 come from Codex, and reset times use your local time zone.
 
-Watch appends each snapshot to the terminal. Failed refreshes are reported on
+Watch appends each snapshot to the terminal, repeating its alarm/auto-reset
+threshold, alarm setting, and auto-reset status with the daily cap when enabled.
+The separate Codex spend-control line includes its threshold when supplied, or
+says it was not provided by Codex. Failed refreshes are reported on
 stderr and retried; alarms sound at most once per successful refresh while quota
 remains low. macOS uses the built-in Sosumi sound; other platforms use the
 terminal bell. JSON snapshots, including any data-availability warnings, stay on

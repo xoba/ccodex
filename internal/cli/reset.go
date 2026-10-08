@@ -164,7 +164,7 @@ func renderResetResult(w io.Writer, result *codex.ResetResult) error {
 	return renderSnapshot(w, &codex.Snapshot{
 		FetchedAt: result.FetchedAt, Account: result.Account,
 		RateLimits: result.RateLimits, Warnings: result.Warnings,
-	}, false)
+	}, false, nil)
 }
 
 func resetOutcomeMessage(outcome string) (string, bool) {

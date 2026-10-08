@@ -29,6 +29,20 @@ interval is `60s`, with a minimum of `1s`. Text mode appends snapshots to the
 terminal; JSON mode writes one object per line. Failed refreshes are reported on
 stderr and retried. Press Ctrl-C to stop.
 
+Every text snapshot repeats the configured alarm/auto-reset threshold, alarm
+sound setting, and auto-reset status. Enabled automatic resets show their daily
+cap; a zero threshold, zero cap, or unavailable daily accounting is identified
+explicitly. For example, `watch --auto-reset` shows:
+
+```text
+Alarm/auto-reset threshold: at or below 2% remaining
+Alarm: enabled
+Auto-reset: enabled (daily cap: 1 per local calendar day; requires an available earned reset)
+```
+
+These watch settings are local to this command. JSON snapshots keep their
+existing format.
+
 `watch` sounds at most once per successful refresh when any reported quota window
 or individual spend limit has remaining quota **at or below the alarm
 threshold**, repeating while the quota stays low. Set `--alarm-threshold PERCENT`
@@ -167,6 +181,11 @@ Status shows account and plan information, quota buckets and windows, reset
 times and countdowns, credits and limit state, available earned resets, and
 token usage summaries when Codex returns them. JSON includes available daily
 usage history; text output shows the latest daily usage bucket.
+
+`Spend control` reports Codex's account spend control, separately from the
+watch alarm/auto-reset threshold. It includes the individual spend limit as its
+threshold when Codex supplies one; otherwise it says
+`threshold: unavailable (not provided by Codex)`.
 
 Window lengths come from Codex; they are not assumed to be hourly or weekly.
 Missing optional data is shown as unavailable. A past reset time does not cause

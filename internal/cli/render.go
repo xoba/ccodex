@@ -16,10 +16,19 @@ import (
 )
 
 func renderText(w io.Writer, snapshot *codex.Snapshot) error {
-	return renderSnapshot(w, snapshot, true)
+	return renderSnapshot(w, snapshot, true, nil)
 }
 
-func renderSnapshot(w io.Writer, snapshot *codex.Snapshot, showUsage bool) error {
+// watchSettings describes this invocation, separately from Codex's spend controls.
+type watchSettings struct {
+	threshold            float64
+	noAlarm              bool
+	autoReset            bool
+	maxResetsPerDay      int
+	autoResetUnavailable bool
+}
+
+func renderSnapshot(w io.Writer, snapshot *codex.Snapshot, showUsage bool, watch *watchSettings) error {
 	var buf bytes.Buffer
 	fmt.Fprintln(&buf, "Codex usage")
 	if a := snapshot.Account; a != nil {
@@ -34,6 +43,9 @@ func renderSnapshot(w io.Writer, snapshot *codex.Snapshot, showUsage bool) error
 		fmt.Fprintf(&buf, "Account: %s (%s)\n", name, clean(plan))
 	}
 	fmt.Fprintf(&buf, "Refreshed: %s\n", snapshot.FetchedAt.Local().Format(time.RFC3339))
+	if watch != nil {
+		writeWatchSettings(&buf, *watch)
+	}
 	if limits := snapshot.RateLimits; limits != nil {
 		if limits.OrdinaryUsageAllowed != nil {
 			state := "allowed"
@@ -80,7 +92,11 @@ func renderSnapshot(w io.Writer, snapshot *codex.Snapshot, showUsage bool) error
 				if *bucket.SpendControlReached {
 					state = "reached"
 				}
-				fmt.Fprintf(&buf, "Spend control: %s\n", state)
+				threshold := "unavailable (not provided by Codex)"
+				if limit := bucket.IndividualLimit; limit != nil && limit.Limit != "" {
+					threshold = clean(limit.Limit)
+				}
+				fmt.Fprintf(&buf, "Spend control: %s; threshold: %s\n", state, threshold)
 			}
 			if limit := bucket.IndividualLimit; limit != nil {
 				fmt.Fprintf(&buf, "Individual spend limit: %s of %s used; %d%% remaining; resets %s\n", clean(limit.Used), clean(limit.Limit), limit.RemainingPercent, resetText(&limit.ResetsAt, snapshot.FetchedAt))
@@ -114,6 +130,32 @@ func renderSnapshot(w io.Writer, snapshot *codex.Snapshot, showUsage bool) error
 	fmt.Fprintln(&buf)
 	_, err := io.Copy(w, &buf)
 	return err
+}
+
+func writeWatchSettings(buf *bytes.Buffer, watch watchSettings) {
+	fmt.Fprintf(buf, "Alarm/auto-reset threshold: at or below %g%% remaining\n", watch.threshold)
+	alarm := "enabled"
+	switch {
+	case watch.threshold == 0:
+		alarm = "disabled (--alarm-threshold=0)"
+	case watch.noAlarm:
+		alarm = "muted (--no-alarm)"
+	}
+	fmt.Fprintf(buf, "Alarm: %s\n", alarm)
+	autoReset := "disabled (enable with --auto-reset)"
+	if watch.autoReset {
+		switch {
+		case watch.threshold == 0:
+			autoReset = "disabled (--auto-reset is set, but --alarm-threshold=0)"
+		case watch.maxResetsPerDay == 0:
+			autoReset = "disabled (--auto-reset is set, but --max-resets-per-day=0)"
+		case watch.autoResetUnavailable:
+			autoReset = "unavailable (--auto-reset is set; daily accounting unavailable)"
+		default:
+			autoReset = fmt.Sprintf("enabled (daily cap: %d per local calendar day; requires an available earned reset)", watch.maxResetsPerDay)
+		}
+	}
+	fmt.Fprintf(buf, "Auto-reset: %s\n", autoReset)
 }
 
 func writeUsage(buf *bytes.Buffer, usage *codex.UsageResponse) {

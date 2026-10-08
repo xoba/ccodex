@@ -87,28 +87,31 @@ func TestLegacyAndMissingOptionalData(t *testing.T) {
 	}
 }
 
-func TestSpendControlThresholdComesFromCodex(t *testing.T) {
+func TestAccountSpendControlIsSeparateFromWatchThreshold(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		reached bool
 		limit   *codex.SpendControlLimitSnapshot
 		want    string
 	}{
-		{"not reported", false, nil, "Spend control: not reached; threshold: unavailable (not provided by Codex)"},
-		{"reported", true, &codex.SpendControlLimitSnapshot{Limit: "150", Used: "150"}, "Spend control: reached; threshold: 150"},
-		{"empty limit", false, &codex.SpendControlLimitSnapshot{}, "Spend control: not reached; threshold: unavailable (not provided by Codex)"},
-		{"terminal controls", false, &codex.SpendControlLimitSnapshot{Limit: "150\n\x1b[2J"}, "Spend control: not reached; threshold: 150  [2J"},
+		{"not reported", false, nil, "Codex account spend control: not reached\n"},
+		{"reported", true, &codex.SpendControlLimitSnapshot{Limit: "150", Used: "150"}, "Codex account spend control: reached\nIndividual spend limit: 150 of 150 used;"},
+		{"empty limit", false, &codex.SpendControlLimitSnapshot{}, "Codex account spend control: not reached\n"},
+		{"terminal controls", false, &codex.SpendControlLimitSnapshot{Limit: "150\n\x1b[2J"}, "Individual spend limit:  of 150  [2J used;"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			snapshot := quotaSnapshot(codex.RateLimitSnapshot{SpendControlReached: &test.reached, IndividualLimit: test.limit})
 			var out bytes.Buffer
-			// The local watch threshold must not be mistaken for the account's
-			// spend threshold, even when Codex supplies no individual limit.
+			// Keep the configured watch threshold unambiguous even when Codex
+			// supplies no account spend limit.
 			if err := renderSnapshot(&out, snapshot, true, &watchSettings{threshold: 2}); err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(out.String(), test.want+"\n") || strings.Contains(out.String(), "\x1b") {
-				t.Fatalf("missing or unsafe spend threshold: %s", out.String())
+			if !strings.Contains(out.String(), test.want) || strings.Contains(out.String(), "\x1b") {
+				t.Fatalf("missing or unsafe account spend control: %s", out.String())
+			}
+			if strings.Contains(out.String(), "threshold: unavailable") || !strings.Contains(out.String(), "Alarm/auto-reset threshold: at or below 2% remaining\n") {
+				t.Fatalf("watch threshold is unclear: %s", out.String())
 			}
 		})
 	}

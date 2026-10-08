@@ -65,10 +65,10 @@ come from Codex, and reset times use your local time zone.
 
 Watch appends each snapshot to the terminal, repeating its alarm/auto-reset
 threshold, alarm setting, and auto-reset status with the daily cap when enabled.
-The separate Codex spend-control line includes its threshold when supplied, or
-says it was not provided by Codex. Failed refreshes are reported on
-stderr and retried; alarms sound at most once per successful refresh while quota
-remains low. macOS uses the built-in Sosumi sound; other platforms use the
+`Codex account spend control` reports the account's spend-control state; the
+alarm/auto-reset threshold above controls when watch acts. Failed refreshes are
+reported on stderr and retried. Alarms sound at most once per successful refresh
+while quota remains low. macOS uses the built-in Sosumi sound; other platforms use the
 terminal bell. JSON snapshots, including any data-availability warnings, stay on
 stdout; refresh errors, reset outcomes, and alarms go to stderr.
 

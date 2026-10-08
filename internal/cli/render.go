@@ -92,11 +92,7 @@ func renderSnapshot(w io.Writer, snapshot *codex.Snapshot, showUsage bool, watch
 				if *bucket.SpendControlReached {
 					state = "reached"
 				}
-				threshold := "unavailable (not provided by Codex)"
-				if limit := bucket.IndividualLimit; limit != nil && limit.Limit != "" {
-					threshold = clean(limit.Limit)
-				}
-				fmt.Fprintf(&buf, "Spend control: %s; threshold: %s\n", state, threshold)
+				fmt.Fprintf(&buf, "Codex account spend control: %s\n", state)
 			}
 			if limit := bucket.IndividualLimit; limit != nil {
 				fmt.Fprintf(&buf, "Individual spend limit: %s of %s used; %d%% remaining; resets %s\n", clean(limit.Used), clean(limit.Limit), limit.RemainingPercent, resetText(&limit.ResetsAt, snapshot.FetchedAt))

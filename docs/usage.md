@@ -182,10 +182,10 @@ times and countdowns, credits and limit state, available earned resets, and
 token usage summaries when Codex returns them. JSON includes available daily
 usage history; text output shows the latest daily usage bucket.
 
-`Spend control` reports Codex's account spend control, separately from the
-watch alarm/auto-reset threshold. It includes the individual spend limit as its
-threshold when Codex supplies one; otherwise it says
-`threshold: unavailable (not provided by Codex)`.
+`Codex account spend control` reports the account's spend-control state. Any
+reported individual spend limit appears on its own line. The
+`Alarm/auto-reset threshold` near the top of each watch snapshot controls when
+watch sounds an alarm or attempts an automatic reset; its default is 2% remaining.
 
 Window lengths come from Codex; they are not assumed to be hourly or weekly.
 Missing optional data is shown as unavailable. A past reset time does not cause

@@ -163,7 +163,7 @@ Remove account details and other private data from any output you share.
 
 ## Development
 
-Requires Go **1.27.1 or newer** and the Codex CLI for live use:
+Requires Go **1.27.2 or newer** and the Codex CLI for live use:
 
 ```sh
 git clone https://github.com/xoba/ccodex.git

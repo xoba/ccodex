@@ -32,7 +32,7 @@ Codex is distributed as a Homebrew **cask**, while `ccodex` uses a source-build
 so the current package cannot install Codex automatically as a dependency.
 
 Watch refreshes every **60 seconds** and sounds an alarm when remaining quota is
-**at or below 2%**. It never consumes an earned reset unless you pass `--auto-reset`,
+**at or below 1%**. It never consumes an earned reset unless you pass `--auto-reset`,
 which acts at that same threshold.
 Press Ctrl-C to stop. For a single snapshot, run `ccodex`.
 

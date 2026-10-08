@@ -25,7 +25,7 @@ func TestWatchSettingsDescribeEffectiveConfiguration(t *testing.T) {
 	}{
 		{
 			name: "default read-only watch",
-			want: []string{"Alarm/auto-reset threshold: at or below 2% remaining", "Alarm: enabled", "Auto-reset: disabled (enable with --auto-reset)"},
+			want: []string{"Alarm/auto-reset threshold: at or below 1% remaining", "Alarm: enabled", "Auto-reset: disabled (enable with --auto-reset)"},
 		},
 		{
 			name: "custom threshold and daily cap",

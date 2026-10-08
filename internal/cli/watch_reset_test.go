@@ -55,7 +55,7 @@ func TestWatchAutoResetOptInRecoversAndRearms(t *testing.T) {
 		if reads == 3 {
 			return autoSnapshot(0, 1), nil
 		}
-		return autoSnapshot(98, 2), nil
+		return autoSnapshot(99, 2), nil
 	}, func(ctx context.Context, opts codex.Options, params codex.ResetParams) (*codex.ResetResult, error) {
 		if !strings.Contains(stderr.String(), params.IdempotencyKey) {
 			t.Fatal("automatic reset key was not recorded before request")
@@ -89,7 +89,7 @@ func TestWatchAutoResetOptInRecoversAndRearms(t *testing.T) {
 		if err := json.Unmarshal([]byte(line), &snapshot); err != nil {
 			t.Fatalf("non-snapshot JSON output: %s", line)
 		}
-		if (i == 1 || i == 4) && hasLowQuota(&snapshot, 2) {
+		if (i == 1 || i == 4) && hasLowQuota(&snapshot, 1) {
 			t.Fatal("post-reset JSON did not show the refreshed quota")
 		}
 	}
@@ -497,8 +497,9 @@ func TestWatchAlarmAndAutoResetShareTheThreshold(t *testing.T) {
 		args       []string
 		wantEvents int
 	}{
-		{"at default threshold", 98, nil, 1},
-		{"just above default threshold", 97.99, nil, 0},
+		{"at default threshold", 99, nil, 1},
+		{"just above default threshold", 98.99, nil, 0},
+		{"previous default threshold", 98, nil, 0},
 		{"at custom threshold", 90, []string{"--alarm-threshold", "10"}, 1},
 		{"just above custom threshold", 89.99, []string{"--alarm-threshold", "10"}, 0},
 	} {

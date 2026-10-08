@@ -35,7 +35,7 @@ cap; a zero threshold, zero cap, or unavailable daily accounting is identified
 explicitly. For example, `watch --auto-reset` shows:
 
 ```text
-Alarm/auto-reset threshold: at or below 2% remaining
+Alarm/auto-reset threshold: at or below 1% remaining
 Alarm: enabled
 Auto-reset: enabled (daily cap: 1 per local calendar day; requires an available earned reset)
 ```
@@ -46,7 +46,7 @@ existing format.
 `watch` sounds at most once per successful refresh when any reported quota window
 or individual spend limit has remaining quota **at or below the alarm
 threshold**, repeating while the quota stays low. Set `--alarm-threshold PERCENT`
-to a finite number from `0` through `100`, including decimals; the default is `2`.
+to a finite number from `0` through `100`, including decimals; the default is `1`.
 Unknown values and failed refreshes do not trigger an alarm. A threshold of `0`
 disables alarms and new automatic reset attempts. Automatic resets use the same
 threshold and the same rule, so a reading that sounds the alarm is also one that
@@ -185,7 +185,7 @@ usage history; text output shows the latest daily usage bucket.
 `Codex account spend control` reports the account's spend-control state. Any
 reported individual spend limit appears on its own line. The
 `Alarm/auto-reset threshold` near the top of each watch snapshot controls when
-watch sounds an alarm or attempts an automatic reset; its default is 2% remaining.
+watch sounds an alarm or attempts an automatic reset; its default is 1% remaining.
 
 Window lengths come from Codex; they are not assumed to be hourly or weekly.
 Missing optional data is shown as unavailable. A past reset time does not cause
@@ -270,8 +270,8 @@ ccodex history --path                # Where the database lives
 
 ```text
 TIME                 SOURCE      ACCOUNT       EVENT            DETAIL
-2026-09-17 14:02:12  watch       6fd0ab8ee8d2  check            codex 5h 1.5%, 7d 59% left; earned resets: 2
-2026-09-17 14:03:12  watch       6fd0ab8ee8d2  reset requested  codex primary 1.5% left; threshold 2%; earned resets: 2 (request …333344445555)
+2026-09-17 14:02:12  watch       6fd0ab8ee8d2  check            codex 5h 0.5%, 7d 59% left; earned resets: 2
+2026-09-17 14:03:12  watch       6fd0ab8ee8d2  reset requested  codex primary 0.5% left; threshold 1%; earned resets: 2 (request …333344445555)
 2026-09-17 14:03:14  watch                     reset outcome    reset (request …333344445555)
 2026-09-17 14:03:14  auto-reset  6fd0ab8ee8d2  check            codex 5h 100%, 7d 59% left; earned resets: 1
 ```

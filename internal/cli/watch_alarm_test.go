@@ -24,7 +24,7 @@ func TestWatchSoundsOnceEachLowIterationWithManyLowQuotas(t *testing.T) {
 		snapshot := quotaSnapshot(codex.RateLimitSnapshot{})
 		snapshot.RateLimits.RateLimitsByLimitID = map[string]codex.RateLimitSnapshot{
 			"codex": {Primary: quotaWindow(99), Secondary: quotaWindow(100)},
-			"other": {Primary: quotaWindow(98)},
+			"other": {Primary: quotaWindow(99.5)},
 		}
 		return snapshot, nil
 	}, nil, func(ctx context.Context, w io.Writer) error {
@@ -46,7 +46,7 @@ func TestWatchSoundsOnceEachLowIterationWithManyLowQuotas(t *testing.T) {
 	}
 	// Each sound is followed by the reminder that nothing will be spent; the
 	// second sound cancels the watch before its reminder is written.
-	if reads != 2 || sounds != 2 || strings.Count(stderr.String(), "\a") != 2 || !strings.HasPrefix(stderr.String(), "\accodex: alarm: quota is at or below 2% remaining") {
+	if reads != 2 || sounds != 2 || strings.Count(stderr.String(), "\a") != 2 || !strings.HasPrefix(stderr.String(), "\accodex: alarm: quota is at or below 1% remaining") {
 		t.Fatalf("reads=%d sounds=%d stderr=%q", reads, sounds, stderr.String())
 	}
 	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
@@ -67,7 +67,8 @@ func TestWatchDoesNotSoundWhenMutedOrQuotaIsNotLow(t *testing.T) {
 		muted    bool
 	}{
 		{"muted", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(99)}), true},
-		{"just above threshold", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(97.99)}), false},
+		{"just above threshold", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(98.99)}), false},
+		{"previous default threshold", quotaSnapshot(codex.RateLimitSnapshot{Primary: quotaWindow(98)}), false},
 		{"unknown", quotaSnapshot(codex.RateLimitSnapshot{}), false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -155,7 +156,7 @@ func TestWatchCustomAlarmThreshold(t *testing.T) {
 	})
 	cmd.SetOut(io.Discard)
 	cmd.SetArgs([]string{"watch", "--alarm-threshold", "10"})
-	// Bound the test in case a regression keeps the default threshold of 2.
+	// Bound the test in case a regression keeps the default threshold of 1.
 	testCtx, stop := context.WithTimeout(ctx, 2*time.Second)
 	defer stop()
 	if err := cmd.ExecuteContext(testCtx); !errors.Is(err, context.Canceled) || sounds != 1 {

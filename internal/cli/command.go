@@ -245,7 +245,7 @@ func newCommandWithHistory(fetch fetchFunc, reset resetFunc, alarm alarmFunc, cr
 		},
 	}
 	watch.Flags().DurationVar(&interval, "interval", time.Minute, "Delay between refreshes (minimum 1s)")
-	watch.Flags().Float64Var(&alarmThreshold, "alarm-threshold", 2, "Alarm at or below this remaining quota percentage; --auto-reset uses the same threshold (0–100; 0 disables both)")
+	watch.Flags().Float64Var(&alarmThreshold, "alarm-threshold", 1, "Alarm at or below this remaining quota percentage; --auto-reset uses the same threshold (0–100; 0 disables both)")
 	watch.Flags().BoolVar(&noAlarm, "no-alarm", false, "Disable low-quota alarm sounds")
 	watch.Flags().BoolVar(&autoReset, "auto-reset", false, "Opt in to automatically spending an available earned reset at or below the alarm threshold")
 	watch.Flags().IntVar(&maxResetsPerDay, "max-resets-per-day", 1, "Maximum automatic resets per local calendar day, shared across watch restarts (0 disables)")

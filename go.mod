@@ -1,6 +1,6 @@
 module github.com/xoba/ccodex
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/gofrs/flock v0.13.1
